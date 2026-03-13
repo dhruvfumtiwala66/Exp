@@ -1003,12 +1003,13 @@
             }, 2500);
         }
 
-        function bootstrapApp() {
+        async function bootstrapApp() {
             try {
-                // DataStore.init(state.token, state.spreadsheetId); // Commented for UI testing
+                await DataStore.init(state.token, state.spreadsheetId);
                 renderApp();
             } catch (err) {
                 console.error('Failed to bootstrap app:', err);
+                showToast('Failed to load data. Please try again.', true);
             }
         }
 
