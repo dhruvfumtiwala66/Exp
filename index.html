@@ -707,7 +707,7 @@
             <div class="setup-card">
                 <h2>Sheet Setup</h2>
                 <p>Paste your Google Sheet ID to begin. Your sheet must have tabs: ED, ID, MED.</p>
-                <input type="text" id="sheet-id-input" placeholder="Enter Spreadsheet ID" aria-label="Spreadsheet ID">
+                <input type="text" id="sheet-id-input" placeholder="Paste Sheet ID or full URL" aria-label="Spreadsheet ID">
                 <div id="setup-error" class="error-text"></div>
                 <button class="primary-button" onclick="validateSheet()">Confirm Sheet</button>
             </div>
@@ -849,9 +849,13 @@
         }
 
         async function validateSheet() {
-            const id = document.getElementById('sheet-id-input').value.trim();
+            let raw = document.getElementById('sheet-id-input').value.trim();
             const errorEl = document.getElementById('setup-error');
             errorEl.textContent = '';
+
+            // Accept full Google Sheets URL — extract just the ID
+            const urlMatch = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+            const id = urlMatch ? urlMatch[1] : raw.replace(/\/+$/, '').trim(); // also strip trailing slashes
 
             if (!id) {
                 errorEl.textContent = 'Please enter a Spreadsheet ID';
