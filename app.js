@@ -160,11 +160,15 @@ const DS = {
         const keyMap = {
             'cat': 'category',
             'desc': 'description',
+            'name': 'name',
             'amt': 'amount',
-            'qty': 'quantity',
+            'qty': 'weight',
+            'weight': 'weight',
             'pay': 'payment_type',
             'bw': 'repeat_bi_weekly',
+            'biweekly': 'repeat_bi_weekly',
             'mo': 'repeat_monthly',
+            'monthly': 'repeat_monthly',
             'comp': 'company',
             'phone': 'phone_bill'
         };
@@ -310,7 +314,20 @@ function catIcon(cat) { return CAT_ICONS[cat] || '💰'; }
 
 function formatDate(d) {
     if (!d) return '';
-    try { return new Date(d + 'T00:00:00').toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }); }
+    try {
+        // Robust parsing: try ISO first, then handle potential local strings
+        let dateObj = new Date(d);
+        if (isNaN(dateObj.getTime())) {
+            // Handle YYYY-MM-DD manually if needed
+            const parts = d.split(/[-/]/);
+            if (parts.length === 3) {
+                // Assume YYYY-MM-DD
+                dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+            }
+        }
+        if (isNaN(dateObj.getTime())) return d;
+        return dateObj.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
     catch { return d; }
 }
 
@@ -329,8 +346,12 @@ function renderItemList(items, sheet) {
     const filtered = getFilteredData(items);
     if (!filtered.length) return `<div class="empty-state"><div class="empty-icon">📭</div><div>No entries match your filters</div><div class="empty-sub">Try changing your filter settings</div></div>`;
     
-    // Sort descending by date
-    const sorted = [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    // Improved sorting: Newest to Oldest
+    const sorted = [...filtered].sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return dateB - dateA;
+    });
     
     const grouped = {};
     sorted.forEach(item => {
@@ -580,14 +601,14 @@ function editEntry(sheet, rowIndex) {
     document.getElementById('delete-btn').style.display = 'block';
     buildForm();
     // Populate fields
-    document.getElementById('f-amount').value = entry.amount || '';
+    document.getElementById('f-amount').value = entry.amount || entry.amt || '';
     document.getElementById('f-date').value = entry.date || '';
     document.getElementById('f-desc').value = entry.description || entry.name || entry.desc || '';
     if (sheet === 'ED' || sheet === 'MED') {
         const cat = entry.category || entry.cat || '';
         document.getElementById('f-cat').value = cat;
         document.getElementById('f-cat-display').textContent = (cat ? `${catIcon(cat)} ${cat}` : 'Select Category');
-        if (document.getElementById('f-qty')) document.getElementById('f-qty').value = entry.quantity || entry.qty || '';
+        if (document.getElementById('f-qty')) document.getElementById('f-qty').value = entry.weight || entry.quantity || entry.qty || '';
         if (document.getElementById('f-unit')) document.getElementById('f-unit').value = entry.unit || '';
         if (document.getElementById('f-payment'))
             document.getElementById('f-payment').value = entry.payment_type || entry.pay || '';
@@ -633,7 +654,7 @@ function buildForm() {
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
             <div class="form-group">
-                <label>QUANTITY</label>
+                <label>${s === 'ED' ? 'WEIGHT' : 'QUANTITY'}</label>
                 <input type="number" id="f-qty" placeholder="1.0" step="0.01">
             </div>
             <div class="form-group">
