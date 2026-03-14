@@ -4,7 +4,8 @@ const CONFIG = {
     REDIRECT_URI: window.location.origin + window.location.pathname
 };
 
-const state = { token: null, spreadsheetId: null };
+const DEFAULT_SHEET_ID = "1Zq5vZZGtHN--a8qa8bfREJxSMjtD4UDgfmX1vYpj-Y8";
+const state = { token: null, spreadsheetId: DEFAULT_SHEET_ID };
 
 // ── Loader ────────────────────────────────────────────────────────────────────
 function showLoader(show) {
@@ -22,22 +23,28 @@ function showToast(msg, isError = false) {
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-function init() {
-    const hash = window.location.hash.substring(1);
-    const params = new URLSearchParams(hash);
-    const tokenFromHash = params.get('access_token');
-    if (tokenFromHash) {
-        localStorage.setItem('google_token', tokenFromHash);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        state.token = tokenFromHash;
-        checkSetup(); return;
+async function init() {
+    const savedToken = localStorage.getItem('spendly_token');
+    if (savedToken) {
+        state.token = savedToken;
+        state.spreadsheetId = DEFAULT_SHEET_ID;
+        localStorage.setItem('spendly_sheet_id', state.spreadsheetId);
+        
+        showLoader(true);
+        try {
+            await bootstrapApp(); 
+            document.getElementById('signin-screen').style.display = 'none';
+            document.getElementById('main-app').style.display = 'flex';
+            switchTab('expenses'); 
+        } catch (e) {
+            localStorage.removeItem('spendly_token');
+            document.getElementById('signin-screen').style.display = 'flex';
+        } finally {
+            showLoader(false);
+        }
+    } else {
+        document.getElementById('signin-screen').style.display = 'flex';
     }
-    const stored = localStorage.getItem('google_token');
-    if (stored) { 
-        state.token = stored; 
-        checkSetup(); 
-    }
-    else { document.getElementById('signin-screen').style.display = 'flex'; }
 }
 
 function handleSignIn() {
@@ -187,6 +194,29 @@ const DS = {
         });
     }
 };
+
+// After successful token
+async function handleAfterToken() {
+    showLoader(true);
+    localStorage.setItem('spendly_token', state.token);
+    
+    // Automatically use the default ID
+    state.spreadsheetId = DEFAULT_SHEET_ID;
+    localStorage.setItem('spendly_sheet_id', state.spreadsheetId);
+    
+    try {
+        await bootstrapApp();
+        document.getElementById('signin-screen').style.display = 'none';
+        document.getElementById('main-app').style.display = 'flex';
+        switchTab('expenses'); // Land on home page
+    } catch (err) {
+        console.error(err);
+        showToast('Error initializing data. Please retry.');
+        document.getElementById('signin-screen').style.display = 'flex';
+    } finally {
+        showLoader(false);
+    }
+}
 
 // ── Sheet Validation ──────────────────────────────────────────────────────────
 async function validateSheet() {
