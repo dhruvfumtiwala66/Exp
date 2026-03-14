@@ -242,7 +242,9 @@ function getFilteredData(items) {
         if (filters.dateRange === 'AllTime') return true;
         if (!item.date) return false;
         
-        const itemDate = new Date(item.date + 'T00:00:00');
+        const itemDate = robustParseDate(item.date);
+        if (!itemDate) return false;
+        
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         
@@ -312,34 +314,41 @@ const CAT_ICONS = {
 
 function catIcon(cat) { return CAT_ICONS[cat] || '💰'; }
 
-function formatDate(d) {
-    if (!d) return '';
-    try {
-        let dateObj = new Date(d);
-        if (isNaN(dateObj.getTime())) {
-            const parts = d.split(/[ \-/]/);
-            if (parts.length === 3) {
-                if (parts[2].length === 4) dateObj = new Date(parts[2], parts[1] - 1, parts[0]);
-                else if (parts[0].length === 4) dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
-            }
+function robustParseDate(d) {
+    if (!d || d === 'Invalid Date') return null;
+    let dateObj = new Date(d);
+    if (!isNaN(dateObj.getTime())) return dateObj;
+
+    // Handle DD/MM/YYYY or MM/DD/YYYY or YYYY/MM/DD
+    const parts = String(d).split(/[ \-/.]/);
+    if (parts.length === 3) {
+        let y, m, day;
+        if (parts[0].length === 4) { // YYYY-MM-DD
+            y = parseInt(parts[0]); m = parseInt(parts[1]) - 1; day = parseInt(parts[2]);
+        } else if (parts[2].length === 4) { // DD/MM/YYYY or MM/DD/YYYY
+            y = parseInt(parts[2]);
+            const p0 = parseInt(parts[0]);
+            const p1 = parseInt(parts[1]);
+            if (p0 > 12) { day = p0; m = p1 - 1; }
+            else { m = p0 - 1; day = p1; }
         }
-        if (isNaN(dateObj.getTime())) return d;
-        return dateObj.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
+        if (y !== undefined) {
+            dateObj = new Date(y, m, day);
+            if (!isNaN(dateObj.getTime())) return dateObj;
+        }
     }
-    catch { return d; }
+    return null;
+}
+
+function formatDate(d) {
+    const dateObj = robustParseDate(d);
+    if (!dateObj) return d || '';
+    return dateObj.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function parseToTime(d) {
-    if (!d) return 0;
-    let dateObj = new Date(d);
-    if (isNaN(dateObj.getTime())) {
-        const parts = d.split(/[ \-/]/);
-        if (parts.length === 3) {
-            if (parts[2].length === 4) dateObj = new Date(parts[2], parts[1] - 1, parts[0]);
-            else if (parts[0].length === 4) dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
-        }
-    }
-    return isNaN(dateObj.getTime()) ? 0 : dateObj.getTime();
+    const dateObj = robustParseDate(d);
+    return dateObj ? dateObj.getTime() : 0;
 }
 
 function renderSummaryCard(gradient, topLabel, topValue, left, right) {
@@ -609,7 +618,8 @@ function editEntry(sheet, rowIndex) {
     buildForm();
     // Populate fields
     document.getElementById('f-amount').value = entry.amount || entry.amt || '';
-    document.getElementById('f-date').value = entry.date || '';
+    const dateObj = robustParseDate(entry.date);
+    document.getElementById('f-date').value = dateObj ? dateObj.toISOString().split('T')[0] : '';
     document.getElementById('f-desc').value = entry.description || entry.name || entry.desc || '';
     if (sheet === 'ED' || sheet === 'MED') {
         const cat = entry.category || entry.cat || '';
