@@ -226,8 +226,9 @@ let analyticsSubTab = 'expenses-cat'; // Default analytics view
 const CURRENCY = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' });
 
 const filters = {
-    category: 'All',
-    dateRange: 'AllTime',
+    categories: ['All'],
+    startDate: '',
+    endDate: '',
     search: '',
     show: false,
     activeSub: 'date' // 'date' or 'cat'
@@ -236,7 +237,10 @@ const filters = {
 function toggleFilterBar() {
     filters.show = !filters.show;
     document.getElementById('filter-container').classList.toggle('show', filters.show);
-    if (filters.show) document.getElementById('global-search').focus();
+    if (filters.show) {
+        document.getElementById('global-search').focus();
+        renderFilterBarControls();
+    }
 }
 
 function handleSearch(val) {
@@ -250,8 +254,31 @@ function setFilterSub(sub) {
 }
 
 function setFilter(type, val) {
-    filters[type] = val;
+    if (type === 'category') {
+        if (val === 'All') {
+            filters.categories = ['All'];
+        } else {
+            // Remove 'All' if it exists
+            const idxAll = filters.categories.indexOf('All');
+            if (idxAll > -1) filters.categories.splice(idxAll, 1);
+
+            const idx = filters.categories.indexOf(val);
+            if (idx > -1) {
+                filters.categories.splice(idx, 1);
+                if (filters.categories.length === 0) filters.categories = ['All'];
+            } else {
+                filters.categories.push(val);
+            }
+        }
+    } else {
+        filters[type] = val;
+    }
     renderTabContent();
+}
+
+function renderFilterBarControls() {
+    const items = currentTab === 'expenses' ? DS.ed : (currentTab === 'mandatory' ? DS.med : DS.id);
+    renderFilterBar(items, currentTab === 'expenses' ? 'ED' : (currentTab === 'mandatory' ? 'MED' : 'ID'));
 }
 
 function getFilteredData(items) {
@@ -262,54 +289,54 @@ function getFilteredData(items) {
             if (!desc.includes(filters.search)) return false;
         }
 
-        // Category Filter
-        if (filters.category !== 'All' && item.category !== filters.category) return false;
-        
-        // Date Filter
-        if (filters.dateRange === 'AllTime') return true;
-        if (!item.date) return false;
-        
-        const itemDate = robustParseDate(item.date);
-        if (!itemDate) return false;
-        
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        
-        if (filters.dateRange === 'ThisMonth') {
-            return itemDate.getMonth() === now.getMonth() && itemDate.getFullYear() === now.getFullYear();
+        // Multi-Category Filter
+        if (!filters.categories.includes('All')) {
+            if (!filters.categories.includes(item.category)) return false;
         }
-        if (filters.dateRange === 'LastMonth') {
-            const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            return itemDate.getMonth() === lastMonth.getMonth() && itemDate.getFullYear() === lastMonth.getFullYear();
+        
+        // Date Range Filter
+        if (filters.startDate || filters.endDate) {
+            const itemDate = robustParseDate(item.date);
+            if (!itemDate) return false;
+            
+            if (filters.startDate) {
+                const s = new Date(filters.startDate);
+                s.setHours(0,0,0,0);
+                if (itemDate < s) return false;
+            }
+            if (filters.endDate) {
+                const e = new Date(filters.endDate);
+                e.setHours(23,59,59,999);
+                if (itemDate > e) return false;
+            }
         }
-        if (filters.dateRange === '30Days') {
-            const thirtyDaysAgo = new Date(today.getTime() - (30 * 24 * 60 * 60 * 1000));
-            return itemDate >= thirtyDaysAgo;
-        }
+
         return true;
     });
 }
 
 function renderFilterBar(items, sheet) {
     const cats = ['All', ...new Set(items.map(i => i.category).filter(Boolean))].sort();
-    const dateRanges = [
-        {id:'AllTime', label:'All Time'}, {id:'ThisMonth', label:'This Month'}, 
-        {id:'LastMonth', label:'Last Month'}, {id:'30Days', label:'30 Days'}
-    ];
 
-    const html = `
-        <div class="filter-types">
-            <button class="filter-type-btn ${filters.activeSub==='date'?'active':''}" onclick="setFilterSub('date')">📅 Date</button>
-            ${sheet !== 'ID' ? `<button class="filter-type-btn ${filters.activeSub==='cat'?'active':''}" onclick="setFilterSub('cat')">🏷️ Category</button>` : ''}
+    const dateHtml = `
+        <div class="date-input-group">
+            <label>Start Date</label>
+            <input type="date" class="date-picker" value="${filters.startDate}" onchange="setFilter('startDate', this.value)">
         </div>
-        <div class="filter-bar">
-            ${filters.activeSub === 'date' 
-                ? dateRanges.map(dr => `<div class="filter-chip ${filters.dateRange===dr.id?'active':''}" onclick="setFilter('dateRange', '${dr.id}')">${dr.label}</div>`).join('')
-                : cats.map(c => `<div class="filter-chip ${filters.category===c?'active':''}" onclick="setFilter('category', '${c}')">${c}</div>`).join('')
-            }
+        <div class="date-input-group">
+            <label>End Date</label>
+            <input type="date" class="date-picker" value="${filters.endDate}" onchange="setFilter('endDate', this.value)">
         </div>
     `;
-    document.getElementById('filter-options').innerHTML = html;
+
+    const catHtml = `
+        <div class="filter-bar">
+            ${cats.map(c => `<div class="filter-chip ${filters.categories.includes(c)?'active':''}" onclick="setFilter('category', '${c}')">${c}</div>`).join('')}
+        </div>
+    `;
+
+    document.getElementById('date-range-controls').innerHTML = dateHtml;
+    document.getElementById('filter-options').innerHTML = catHtml;
 }
 
 function switchTab(tab) {
@@ -511,23 +538,9 @@ function renderItemList(items, sheet) {
 }
 
 function getSubtext(item, sheet) {
-    if (sheet === 'ID') {
-        const parts = [];
-        if (item.company) parts.push(item.company);
-        if (item.repeat_bi_weekly === 'TRUE') parts.push('Bi-weekly');
-        return parts.join(' · ');
-    }
     const parts = [];
-    if (item.quantity && item.unit) parts.push(`${item.quantity} ${item.unit}`);
-    else if (item.unit) parts.push(item.unit);
-    
     if (item.category) parts.push(item.category);
     if (item.payment_type) parts.push(item.payment_type);
-
-    if (sheet === 'MED') {
-        if (item.repeat_bi_weekly === 'TRUE') parts.push('Bi-weekly');
-        else if (item.repeat_monthly === 'TRUE') parts.push('Monthly');
-    }
     return parts.join(' · ');
 }
 
@@ -751,7 +764,7 @@ function editEntry(sheet, rowIndex) {
         document.getElementById('f-cat').value = cat;
         document.getElementById('f-cat-display').textContent = (cat ? `${catIcon(cat)} ${cat}` : 'Select Category');
         if (document.getElementById('f-payment')) document.getElementById('f-payment').value = entry.payment_type || '';
-        if (document.getElementById('f-qty')) document.getElementById('f-qty').value = entry.weight || entry.quantity || '';
+        if (document.getElementById('f-weight')) document.getElementById('f-weight').value = entry.weight || entry.quantity || '';
         if (document.getElementById('f-unit')) document.getElementById('f-unit').value = entry.unit || '';
     }
     
@@ -823,23 +836,28 @@ function buildForm() {
         </div>`;
     }
 
+    if (activeSheet !== 'ID') {
+        html += `
+        <div class="sc-grid" style="margin-bottom:10px;">
+            <div class="form-group">
+                <label>Weight</label>
+                <input type="number" id="f-weight" step="any" placeholder="0.00">
+            </div>
+            <div class="form-group">
+                <label>Unit</label>
+                <select id="f-unit">
+                    <option value="">None</option>
+                    <option value="kg">kg</option>
+                    <option value="g">g</option>
+                    <option value="lbs">lbs</option>
+                    <option value="pcs">pcs</option>
+                    <option value="ml">ml</option>
+                    <option value="l">l</option>
+                </select>
+            </div>
+        </div>`;
+    }
     if (s === 'ED' || s === 'MED') {
-        if (s === 'ED') {
-            html += `
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                <div class="form-group">
-                    <label>WEIGHT</label>
-                    <input type="number" id="f-qty" placeholder="0.00" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label>UNIT</label>
-                    <select id="f-unit">
-                        <option value="">None</option>
-                        ${UNITS.map(u => `<option value="${u.v}">${u.l}</option>`).join('')}
-                    </select>
-                </div>
-            </div>`;
-        }
         html += `
         <div class="form-group">
             <label>PAYMENT TYPE</label>
@@ -883,7 +901,7 @@ function resetForm() {
     if (document.getElementById('f-desc')) document.getElementById('f-desc').value = '';
     if (document.getElementById('f-cat')) document.getElementById('f-cat').value = '';
     if (document.getElementById('f-cat-display')) document.getElementById('f-cat-display').textContent = 'Select Category';
-    if (document.getElementById('f-qty')) document.getElementById('f-qty').value = '';
+    if (document.getElementById('f-weight')) document.getElementById('f-weight').value = '';
     if (document.getElementById('f-unit')) document.getElementById('f-unit').value = '';
     if (document.getElementById('f-payment')) document.getElementById('f-payment').value = '';
 }
@@ -903,7 +921,7 @@ async function saveEntry() {
     if (activeSheet === 'ED') {
         payload.category = document.getElementById('f-cat').value;
         payload.description = document.getElementById('f-desc').value;
-        payload.weight = document.getElementById('f-qty').value;
+        payload.weight = document.getElementById('f-weight').value;
         payload.unit = document.getElementById('f-unit').value;
         payload.payment_type = document.getElementById('f-payment').value;
     } else if (activeSheet === 'MED') {
@@ -1107,6 +1125,48 @@ async function handleTouchEnd(e) {
     currentSwipeItem = null;
 }
 
+function renderSidebar() {
+    const container = document.getElementById('sidebar-categories');
+    let html = `
+        <div class="side-label">Navigation</div>
+        <div class="side-item ${currentTab==='expenses'?'active':''}" onclick="switchSidebarTab('expenses')"><div class="side-item-icon">💸</div>Expenses</div>
+        <div class="side-item ${currentTab==='mandatory'?'active':''}" onclick="switchSidebarTab('mandatory')"><div class="side-item-icon">🗓️</div>Mandatory</div>
+        <div class="side-item ${currentTab==='income'?'active':''}" onclick="switchSidebarTab('income')"><div class="side-item-icon">💰</div>Income</div>
+
+        <div class="side-label">Account</div>
+        <div class="side-item" onclick="toggleCategoryManage(true)"><div class="side-item-icon">🏷️</div>Manage Categories</div>
+        <div class="side-item" onclick="handleSignOut()"><div class="side-item-icon">🚪</div>Sign Out</div>
+    `;
+    container.innerHTML = html;
+}
+
+function toggleCategoryManage(show) {
+    const view = document.getElementById('cat-manage-view');
+    view.classList.toggle('show', show);
+    if (show) {
+        toggleSidebar(false);
+        renderCategoryManageList();
+    }
+}
+
+function renderCategoryManageList() {
+    const list = document.getElementById('cat-manage-list');
+    let html = '';
+    for (const group in CATEGORIES) {
+        html += `<div class="side-label">${group}</div>`;
+        const cats = CATEGORIES[group];
+        if (cats.length === 0) {
+             html += `<div class="side-item"><div class="side-item-icon">${catIcon(group)}</div><div class="side-name">${group}</div></div>`;
+        } else {
+            cats.forEach(cat => {
+                const full = `${group} - ${cat}`;
+                html += `<div class="side-item"><div class="side-item-icon">${catIcon(full)}</div><div class="side-name">${cat}</div></div>`;
+            });
+        }
+    }
+    list.innerHTML = html;
+}
+
 function copyEntry(sheet, rowIndex) {
     const store = sheet === 'ED' ? DS.ed : sheet === 'MED' ? DS.med : DS.id;
     const entry = store.find(r => r._row === rowIndex);
@@ -1131,6 +1191,8 @@ function copyEntry(sheet, rowIndex) {
     if (document.getElementById('f-payment')) document.getElementById('f-payment').value = entry.payment_type || '';
     if (document.getElementById('f-name')) document.getElementById('f-name').value = entry.name || '';
     if (document.getElementById('f-company')) document.getElementById('f-company').value = entry.company || '';
+    if (document.getElementById('f-weight')) document.getElementById('f-weight').value = entry.weight || '';
+    if (document.getElementById('f-unit')) document.getElementById('f-unit').value = entry.unit || '';
     
     openSheet();
     showToast('Transaction copied. Ready to save.');
@@ -1152,7 +1214,7 @@ function promptAddCategory() {
     if (cat && !custom[group].includes(cat)) custom[group].push(cat);
     localStorage.setItem('custom_categories', JSON.stringify(custom));
     
-    renderSidebarCategories();
+    renderSidebar();
     showToast(`Category "${name}" added`);
 }
 
