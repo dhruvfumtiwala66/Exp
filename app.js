@@ -267,9 +267,8 @@ const filters = {
 function toggleFilterBar() {
     filters.show = !filters.show;
     document.getElementById('filter-container').classList.toggle('show', filters.show);
-    // document.querySelector('.filter-toggle-icon').textContent = filters.show ? '✕' : '🔍'; // Optional
+    document.querySelector('.filter-toggle-btn')?.classList.toggle('active', filters.show);
     if (filters.show) {
-        document.getElementById('global-search').focus();
         renderFilterBarControls();
     }
 }
@@ -426,6 +425,15 @@ const CAT_ICONS = {
     'Electricity':'⚡','Heat':'🔥','Internet (Wi-Fi)':'📶','Phone':'📱','TV':'📺','Water':'💧'
 };
 
+const UNITS = [
+    {v:'G', l:'G - Grams'},
+    {v:'KG', l:'KG - Kilograms'},
+    {v:'L', l:'L - Liters'},
+    {v:'ML', l:'ML - Milliliters'},
+    {v:'P', l:'P - Pieces'},
+    {v:'Pe', l:'Pe - Persons'}
+];
+
 function catIcon(cat) { 
     if (!cat) return '💰';
     const clean = cat.split(' - ').pop();
@@ -433,19 +441,21 @@ function catIcon(cat) {
 }
 
 function renderHeader(title, hasFilters = true) {
-    return `
+    const html = `
         <div class="page-header">
             <div class="header-left">
                 <button class="menu-btn" onclick="toggleSidebar(true)" title="Menu">☰</button>
                 <h1 class="page-title">${title}</h1>
             </div>
             <div class="header-right">
-                ${hasFilters ? `<button class="refresh-btn ${filters.show ? 'active' : ''}" onclick="toggleFilterBar()" title="Filter" style="margin-right:8px; font-size:16px;">
+                ${hasFilters ? `<button class="refresh-btn filter-toggle-btn ${filters.show ? 'active' : ''}" onclick="toggleFilterBar()" title="Filter" style="margin-right:8px;">
                     <svg viewBox="0 0 24 24" style="width:20px; height:20px;"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
                 </button>` : ''}
                 <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
             </div>
         </div>`;
+    document.getElementById('header-area').innerHTML = html;
+    return ''; // We now push to header-area directly
 }
 
 function robustParseDate(d) {
@@ -609,26 +619,23 @@ function getSubtext(item, sheet) {
 // ── Main Page Tabs (No charts here now) ──────────────────────────────────────
 function renderExpenses(c) {
     const items = DS.ed;
+    renderHeader('Expenses');
     renderFilterBar(items, 'ED');
-    c.innerHTML = `
-        ${renderHeader('Expenses')}
-        ${renderItemList(items, 'ED')}`;
+    c.innerHTML = renderItemList(items, 'ED');
 }
 
 function renderMandatory(c) {
     const items = DS.med;
+    renderHeader('Mandatory');
     renderFilterBar(items, 'MED');
-    c.innerHTML = `
-        ${renderHeader('Mandatory')}
-        ${renderItemList(items, 'MED')}`;
+    c.innerHTML = renderItemList(items, 'MED');
 }
 
 function renderIncome(c) {
     const items = DS.id;
+    renderHeader('Income');
     renderFilterBar(items, 'ID');
-    c.innerHTML = `
-        ${renderHeader('Income')}
-        ${renderItemList(items, 'ID')}`;
+    c.innerHTML = renderItemList(items, 'ID');
 }
 
 // ── Analytics Tab ─────────────────────────────────────────────────────────────
@@ -640,10 +647,11 @@ function renderAnalytics(c) {
     
     const sourceData = (analyticsSubTab.startsWith('income') ? DS.id : DS.ed);
     const filtered = getFilteredData(sourceData);
+    
+    renderHeader(labels[analyticsSubTab] || 'Analytics');
     renderFilterBar(sourceData, analyticsSubTab.startsWith('income') ? 'ID' : 'ED');
     
     c.innerHTML = `
-        ${renderHeader(labels[analyticsSubTab] || 'Analytics')}
         <div class="chart-card">
             <div class="chart-container"><canvas id="analyticsChart"></canvas></div>
             <div id="analyticsLegend" class="chart-legend"></div>
@@ -667,7 +675,7 @@ function renderChartInAnalytics(data) {
         data.forEach(r => { const k = r.company || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
     }
 
-    const sorted = Object.entries(groups).sort((a,b) => b[1] - a[1]).slice(0, 8);
+    const sorted = Object.entries(groups).sort((a,b) => b[1] - a[1]);
     const labels = sorted.map(s => s[0]);
     const values = sorted.map(s => s[1]);
     const COLORS = ['#6366F1','#8B5CF6','#EC4899','#EF4444','#F59E0B','#10B981','#06B6D4','#3B82F6'];
@@ -702,68 +710,11 @@ function renderChartInAnalytics(data) {
         <div class="legend-item">
             <div class="legend-color" style="background:${COLORS[i % COLORS.length]}"></div>
             <div class="legend-label">${label}</div>
-            <div class="legend-val">${CURRENCY.format(val)}</div>
+            <div class="legend-value">${CURRENCY.format(val)}</div>
         </div>
     `).join('');
 }
 
-function renderChart(data) {
-    const ctx = document.getElementById('analyticsChart')?.getContext('2d');
-    if (!ctx) return;
-    
-    const groups = {};
-    if (analyticsSubTab === 'expenses-cat') {
-        data.forEach(r => { const k = r.category || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
-    } else if (analyticsSubTab === 'expenses-card') {
-        data.forEach(r => { const k = r.payment_type || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
-    } else if (analyticsSubTab === 'expenses-month' || analyticsSubTab === 'income-month') {
-        data.forEach(r => { const k = (r.date || '').substring(0, 7) || 'Unknown'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
-    } else if (analyticsSubTab === 'income-company') {
-        data.forEach(r => { const k = r.company || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
-    }
-    
-    const sorted = Object.entries(groups).sort((a,b) => b[1] - a[1]);
-    const labels = sorted.map(s => s[0]);
-    const values = sorted.map(s => s[1]);
-    const COLORS = ['#6366F1','#8B5CF6','#EC4899','#EF4444','#F59E0B','#10B981','#06B6D4','#3B82F6'];
-    
-    const isPie = analyticsSubTab.includes('cat') || analyticsSubTab.includes('card') || analyticsSubTab.includes('company');
-    
-    if (window.activeChart) window.activeChart.destroy();
-    
-    window.activeChart = new Chart(ctx, {
-        type: isPie ? 'doughnut' : 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                data: values,
-                backgroundColor: COLORS,
-                borderWidth: 0,
-                borderRadius: isPie ? 0 : 8
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { 
-                legend: { display: false }
-            },
-            scales: isPie ? {} : {
-                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, border: { display: false }, ticks: { color: 'rgba(240,240,255,0.4)' } },
-                x: { grid: { display: false }, ticks: { color: 'rgba(240,240,255,0.4)' } }
-            }
-        }
-    });
-    
-    const legend = document.getElementById('chartLegend');
-    legend.innerHTML = sorted.map(([label, val], i) => `
-        <div class="legend-item">
-            <div class="legend-color" style="background:${COLORS[i % COLORS.length]}"></div>
-            <div style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${label}</div>
-            <div style="font-weight:700;">${CURRENCY.format(val)}</div>
-        </div>
-    `).join('');
-}
 
 function barRow(label, val, max, color) {
     const pct = Math.round((val / max) * 100);
@@ -845,17 +796,6 @@ function editEntry(sheet, rowIndex) {
     openSheet();
 }
 
-const PAYMENT_TYPES = [
-    "Account Debit", "American Express SimplyCash", "American Express SimplyCash - Cashback", "Cash",
-    "Costco Mastercard", "Costco Mastercard - Cashback", "Home Trust Preferred Visa", "Rogers Mastercard",
-    "Scotiabank Visa Card - Dhruv", "Scotiabank Visa Card - Mansi"
-];
-
-const UNITS = [
-    {v:"G", l:"G - Grams"}, {v:"KG", l:"KG - Kilograms"}, {v:"L", l:"L - Liters"},
-    {v:"ML", l:"ML - Milliliters"}, {v:"P", l:"P - Pieces"}, {v:"Pe", l:"Pe - Persons"}
-];
-
 const ID_NAMES = ["Dhruv", "Mansi", "Mansi & Dhruv"];
 
 function buildForm() {
@@ -898,7 +838,7 @@ function buildForm() {
         </div>`;
     }
 
-    if (activeSheet !== 'ID') {
+    if (s === 'ED') {
         html += `
         <div class="sc-grid" style="margin-bottom:10px;">
             <div class="form-group">
@@ -909,12 +849,7 @@ function buildForm() {
                 <label>Unit</label>
                 <select id="f-unit">
                     <option value="">None</option>
-                    <option value="kg">kg</option>
-                    <option value="g">g</option>
-                    <option value="lbs">lbs</option>
-                    <option value="pcs">pcs</option>
-                    <option value="ml">ml</option>
-                    <option value="l">l</option>
+                    ${UNITS.map(u => `<option value="${u.v}">${u.l}</option>`).join('')}
                 </select>
             </div>
         </div>`;
@@ -924,8 +859,10 @@ function buildForm() {
         <div class="form-group">
             <label>PAYMENT TYPE</label>
             <select id="f-payment">
-                <option value="">Select Payment Type</option>
-                ${PAYMENT_TYPES.map(p => `<option value="${p}">${p}</option>`).join('')}
+                <option value="ROGERS MASTERCARD">Rogers Mastercard</option>
+                <option value="ACCOUNT DEBIT">Account Debit</option>
+                <option value="CIBC MASTERCARD">CIBC Mastercard</option>
+                <option value="CASH">Cash</option>
             </select>
         </div>`;
     }
