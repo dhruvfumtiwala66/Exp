@@ -315,20 +315,31 @@ function catIcon(cat) { return CAT_ICONS[cat] || '💰'; }
 function formatDate(d) {
     if (!d) return '';
     try {
-        // Robust parsing: try ISO first, then handle potential local strings
         let dateObj = new Date(d);
         if (isNaN(dateObj.getTime())) {
-            // Handle YYYY-MM-DD manually if needed
-            const parts = d.split(/[-/]/);
+            const parts = d.split(/[ \-/]/);
             if (parts.length === 3) {
-                // Assume YYYY-MM-DD
-                dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+                if (parts[2].length === 4) dateObj = new Date(parts[2], parts[1] - 1, parts[0]);
+                else if (parts[0].length === 4) dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
             }
         }
         if (isNaN(dateObj.getTime())) return d;
         return dateObj.toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' });
     }
     catch { return d; }
+}
+
+function parseToTime(d) {
+    if (!d) return 0;
+    let dateObj = new Date(d);
+    if (isNaN(dateObj.getTime())) {
+        const parts = d.split(/[ \-/]/);
+        if (parts.length === 3) {
+            if (parts[2].length === 4) dateObj = new Date(parts[2], parts[1] - 1, parts[0]);
+            else if (parts[0].length === 4) dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+        }
+    }
+    return isNaN(dateObj.getTime()) ? 0 : dateObj.getTime();
 }
 
 function renderSummaryCard(gradient, topLabel, topValue, left, right) {
@@ -346,12 +357,8 @@ function renderItemList(items, sheet) {
     const filtered = getFilteredData(items);
     if (!filtered.length) return `<div class="empty-state"><div class="empty-icon">📭</div><div>No entries match your filters</div><div class="empty-sub">Try changing your filter settings</div></div>`;
     
-    // Improved sorting: Newest to Oldest
-    const sorted = [...filtered].sort((a, b) => {
-        const dateA = a.date ? new Date(a.date).getTime() : 0;
-        const dateB = b.date ? new Date(b.date).getTime() : 0;
-        return dateB - dateA;
-    });
+    // Improved sorting: Newest to Oldest using robust parser
+    const sorted = [...filtered].sort((a, b) => parseToTime(b.date) - parseToTime(a.date));
     
     const grouped = {};
     sorted.forEach(item => {
