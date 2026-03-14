@@ -212,6 +212,7 @@ async function bootstrapApp() {
     try {
         await DS.init(state.token, state.spreadsheetId);
         document.getElementById('main-app').style.display = 'flex';
+        renderSidebarCategories();
         switchTab('expenses');
     } catch (err) {
         showToast('Failed to load data. Try again.', true);
@@ -302,17 +303,31 @@ function renderTabContent() {
 
 // ── Render Helpers ────────────────────────────────────────────────────────────
 const CAT_ICONS = {
-    'Anti Virus':'🛡️',
-    'Games':'🎮','Movies':'🎬','Others':'🎭',
-    'Coffee':'☕','Dining Out':'🍽️','Groceries':'🛒','Packaged Food':'🍱',
+    'Anti Virus':'🛡️','Games':'🎮','Movies':'🎬','Others':'🎭','Coffee':'☕','Dining Out':'🍽️','Groceries':'🛒','Packaged Food':'🍱',
     'Electronics':'💻','Furniture':'🛋️','Household Machines':'🧺','Household Supplies':'🧻','Insurance':'🛡️','Maintenance':'🔧','Mortgage':'🏦','Rent':'🏠','Taxes':'📄',
     'Bank Account Fees':'💸','Business':'💼','Charity':'❤️','Clothing':'👕','Credit Card Fees':'💳','Donation':'🎁','Education':'🎓','Footwear':'👟','Gifts':'🎁','Grooming':'🪮','India':'🇮🇳','Investments':'📈','Makeup & Skincare':'💄','Medical Expenses':'🏥','Membership':'💳','Other':'📦','Parcels':'📦','Shein':'🛍️','Souvenir':'🧸',
-    'Liquor':'🍺',
-    'Bus':'🚌','Car':'🚗','Flight':'✈️','Gas':'⛽','Hotel':'🏨','Other':'🚗','Parking':'🅿️','Taxi':'🚕','Train':'🚆',
+    'Liquor':'🍺','Bus':'🚌','Car':'🚗','Flight':'✈️','Gas':'⛽','Hotel':'🏨','Parking':'🅿️','Taxi':'🚕','Train':'🚆',
     'Electricity':'⚡','Heat':'🔥','Internet (Wi-Fi)':'📶','Phone':'📱','TV':'📺','Water':'💧'
 };
 
-function catIcon(cat) { return CAT_ICONS[cat] || '💰'; }
+function catIcon(cat) { 
+    if (!cat) return '💰';
+    const clean = cat.split(' - ').pop();
+    return CAT_ICONS[clean] || '💰'; 
+}
+
+function renderHeader(title) {
+    return `
+        <div class="page-header">
+            <div class="header-left">
+                <button class="menu-btn" onclick="toggleSidebar(true)" title="Categories">☰</button>
+                <h1 class="page-title">${title}</h1>
+            </div>
+            <div class="header-right">
+                <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
+            </div>
+        </div>`;
+}
 
 function robustParseDate(d) {
     if (!d || d === 'Invalid Date') return null;
@@ -433,12 +448,13 @@ function getSubtext(item, sheet) {
 function renderExpenses(c) {
     const items = DS.ed;
     const now = new Date();
-    const thisMonth = items.filter(r => r.date && r.date.startsWith(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`));
+    const thisMonth = items.filter(r => {
+        const d = robustParseDate(r.date);
+        return d && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
     const monthTotal = thisMonth.reduce((s, r) => s + (parseFloat(r.amount)||0), 0);
     c.innerHTML = `
-        <div class="page-header"><h1 class="page-title">Expenses</h1>
-            <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
-        </div>
+        ${renderHeader('Expenses')}
         ${renderSummaryCard('linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 'THIS MONTH', CURRENCY.format(monthTotal),
             {label:'TOTAL ENTRIES', value: items.length},
             {label:'DAILY AVG', value: CURRENCY.format(monthTotal / (new Date(now.getFullYear(), now.getMonth()+1, 0).getDate()))}
@@ -454,9 +470,7 @@ function renderMandatory(c) {
     const mo = items.filter(i => i.repeat_monthly === 'TRUE').reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
     const total = bw + mo;
     c.innerHTML = `
-        <div class="page-header"><h1 class="page-title">Mandatory</h1>
-            <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
-        </div>
+        ${renderHeader('Mandatory')}
         ${renderSummaryCard('linear-gradient(135deg, #f093fb 0%, #8B5CF6 100%)', 'MONTHLY OBLIGATIONS', CURRENCY.format(total),
             {label:'BI-WEEKLY ×2', value: CURRENCY.format(bw)},
             {label:'MONTHLY', value: CURRENCY.format(mo)}
@@ -474,9 +488,7 @@ function renderIncome(c) {
     const mandMO = DS.med.filter(i => i.repeat_monthly === 'TRUE').reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
     const net = incomeTotal - expTotal - mandBW - mandMO;
     c.innerHTML = `
-        <div class="page-header"><h1 class="page-title">Income</h1>
-            <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
-        </div>
+        ${renderHeader('Income')}
         ${renderSummaryCard('linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)', 'NET REMAINING', CURRENCY.format(net),
             {label:'TOTAL INCOME', value: CURRENCY.format(incomeTotal)},
             {label:'SOURCES', value: items.length}
@@ -490,9 +502,7 @@ let analyticView = 'Category';
 function renderAnalytics(c) {
     const views = ['Category', 'Payment', 'Monthly', 'Cash Flow'];
     c.innerHTML = `
-        <div class="page-header"><h1 class="page-title">Analytics</h1>
-            <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
-        </div>
+        ${renderHeader('Analytics')}
         <div class="seg-control">
             ${views.map(v => `<div class="seg${analyticView===v?' seg-active':''}" onclick="switchAnalytics('${v}')">${v}</div>`).join('')}
         </div>
@@ -616,39 +626,55 @@ function editEntry(sheet, rowIndex) {
     document.getElementById('sheet-title').textContent = `Edit ${labels[sheet]}`;
     document.getElementById('delete-btn').style.display = 'block';
     buildForm();
-    // Populate fields
-    document.getElementById('f-amount').value = entry.amount || entry.amt || '';
+    
+    // Populate fields based on sheet mapping
     const dateObj = robustParseDate(entry.date);
-    document.getElementById('f-date').value = dateObj ? dateObj.toISOString().split('T')[0] : '';
-    document.getElementById('f-desc').value = entry.description || entry.name || entry.desc || '';
+    if (document.getElementById('f-date')) document.getElementById('f-date').value = dateObj ? dateObj.toISOString().split('T')[0] : '';
+    if (document.getElementById('f-amount')) document.getElementById('f-amount').value = entry.amount || '';
+    if (document.getElementById('f-desc')) document.getElementById('f-desc').value = entry.description || entry.desc || '';
+
     if (sheet === 'ED' || sheet === 'MED') {
-        const cat = entry.category || entry.cat || '';
+        const cat = entry.category || '';
         document.getElementById('f-cat').value = cat;
         document.getElementById('f-cat-display').textContent = (cat ? `${catIcon(cat)} ${cat}` : 'Select Category');
-        if (document.getElementById('f-qty')) document.getElementById('f-qty').value = entry.weight || entry.quantity || entry.qty || '';
+        if (document.getElementById('f-payment')) document.getElementById('f-payment').value = entry.payment_type || '';
+        if (document.getElementById('f-qty')) document.getElementById('f-qty').value = entry.weight || entry.quantity || '';
         if (document.getElementById('f-unit')) document.getElementById('f-unit').value = entry.unit || '';
-        if (document.getElementById('f-payment'))
-            document.getElementById('f-payment').value = entry.payment_type || entry.pay || '';
     }
+    
     if (sheet === 'MED') {
-        document.getElementById('f-biweekly').checked = (entry.repeat_bi_weekly || entry.bw) === 'TRUE';
-        document.getElementById('f-monthly').checked = (entry.repeat_monthly || entry.mo) === 'TRUE';
+        if (document.getElementById('f-biweekly')) document.getElementById('f-biweekly').checked = entry.repeat_bi_weekly === 'TRUE';
+        if (document.getElementById('f-monthly')) document.getElementById('f-monthly').checked = entry.repeat_monthly === 'TRUE';
     }
+    
     if (sheet === 'ID') {
-        if (document.getElementById('f-company'))
-            document.getElementById('f-company').value = entry.company || entry.comp || '';
-        if (document.getElementById('f-phone'))
-            document.getElementById('f-phone').value = entry.phone_bill || entry.phone || '';
-        if (document.getElementById('f-biweekly'))
-            document.getElementById('f-biweekly').checked = (entry.repeat_bi_weekly || entry.bw) === 'TRUE';
+        if (document.getElementById('f-name')) document.getElementById('f-name').value = entry.name || '';
+        if (document.getElementById('f-company')) document.getElementById('f-company').value = entry.company || '';
+        if (document.getElementById('f-phone')) document.getElementById('f-phone').value = entry.phone_bill || '';
+        if (document.getElementById('f-biweekly')) document.getElementById('f-biweekly').checked = entry.repeat_bi_weekly === 'TRUE';
     }
+    
     openSheet();
 }
+
+const PAYMENT_TYPES = [
+    "Account Debit", "American Express SimplyCash", "American Express SimplyCash - Cashback", "Cash",
+    "Costco Mastercard", "Costco Mastercard - Cashback", "Home Trust Preferred Visa", "Rogers Mastercard",
+    "Scotiabank Visa Card - Dhruv", "Scotiabank Visa Card - Mansi"
+];
+
+const UNITS = [
+    {v:"G", l:"G - Grams"}, {v:"KG", l:"KG - Kilograms"}, {v:"L", l:"L - Liters"},
+    {v:"ML", l:"ML - Milliliters"}, {v:"P", l:"P - Pieces"}, {v:"Pe", l:"Pe - Persons"}
+];
+
+const ID_NAMES = ["Dhruv", "Mansi", "Mansi & Dhruv"];
 
 function buildForm() {
     const body = document.getElementById('form-body');
     const s = activeSheet;
     const amtColor = s === 'ID' ? '#10B981' : s === 'MED' ? '#8B5CF6' : '#EF4444';
+    
     let html = `
         <div class="form-group amount-group">
             <input type="number" id="f-amount" class="amount-input" placeholder="0.00" step="0.01" style="color:${amtColor};">
@@ -656,51 +682,57 @@ function buildForm() {
         <div class="form-group">
             <label>DATE</label>
             <input type="date" id="f-date">
-        </div>
-        <div class="form-group">
-            <label>${s === 'ID' ? 'NAME / SOURCE' : 'DESCRIPTION'}</label>
-            <input type="text" id="f-desc" placeholder="${s === 'ID' ? 'Salary, Freelance...' : 'What was it for?'}">
         </div>`;
 
-    if (s === 'ED' || s === 'MED') {
+    if (s === 'ID') {
+        html += `
+        <div class="form-group">
+            <label>NAME</label>
+            <select id="f-name">
+                <option value="">Select Name</option>
+                ${ID_NAMES.map(n => `<option value="${n}">${n}</option>`).join('')}
+            </select>
+        </div>
+        <div class="form-group">
+            <label>COMPANY</label>
+            <input type="text" id="f-company" placeholder="Company name">
+        </div>`;
+    } else {
         html += `
         <div class="form-group tappable" onclick="showCategoryPicker()">
             <label>CATEGORY</label>
             <div id="f-cat-display" class="form-value">Select Category</div>
             <input type="hidden" id="f-cat">
         </div>
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-            <div class="form-group">
-                <label>${s === 'ED' ? 'WEIGHT' : 'QUANTITY'}</label>
-                <input type="number" id="f-qty" placeholder="1.0" step="0.01">
-            </div>
-            <div class="form-group">
-                <label>UNIT</label>
-                <select id="f-unit">
-                    <option value="">None</option>
-                    <option value="G">G - Grams</option>
-                    <option value="KG">KG - Kilograms</option>
-                    <option value="L">L - Liters</option>
-                    <option value="ML">ML - Milliliters</option>
-                    <option value="P">P - Pieces</option>
-                    <option value="Pe">Pe - Persons</option>
-                </select>
-            </div>
-        </div>
+        <div class="form-group">
+            <label>DESCRIPTION</label>
+            <input type="text" id="f-desc" placeholder="What was it for?">
+        </div>`;
+    }
+
+    if (s === 'ED' || s === 'MED') {
+        if (s === 'ED') {
+            html += `
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div class="form-group">
+                    <label>WEIGHT</label>
+                    <input type="number" id="f-qty" placeholder="0.00" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>UNIT</label>
+                    <select id="f-unit">
+                        <option value="">None</option>
+                        ${UNITS.map(u => `<option value="${u.v}">${u.l}</option>`).join('')}
+                    </select>
+                </div>
+            </div>`;
+        }
+        html += `
         <div class="form-group">
             <label>PAYMENT TYPE</label>
             <select id="f-payment">
                 <option value="">Select Payment Type</option>
-                <option value="Account Debit">Account Debit</option>
-                <option value="American Express SimplyCash">American Express SimplyCash</option>
-                <option value="American Express SimplyCash - Cashback">American Express SimplyCash - Cashback</option>
-                <option value="Cash">Cash</option>
-                <option value="Costco Mastercard">Costco Mastercard</option>
-                <option value="Costco Mastercard - Cashback">Costco Mastercard - Cashback</option>
-                <option value="Home Trust Preferred Visa">Home Trust Preferred Visa</option>
-                <option value="Rogers Mastercard">Rogers Mastercard</option>
-                <option value="Scotiabank Visa Card - Dhruv">Scotiabank Visa Card - Dhruv</option>
-                <option value="Scotiabank Visa Card - Mansi">Scotiabank Visa Card - Mansi</option>
+                ${PAYMENT_TYPES.map(p => `<option value="${p}">${p}</option>`).join('')}
             </select>
         </div>`;
     }
@@ -719,10 +751,6 @@ function buildForm() {
 
     if (s === 'ID') {
         html += `
-        <div class="form-group">
-            <label>COMPANY / EMPLOYER</label>
-            <input type="text" id="f-company" placeholder="Company name">
-        </div>
         <div class="form-group">
             <label>PHONE BILL (optional)</label>
             <input type="number" id="f-phone" placeholder="0.00" step="0.01">
@@ -755,52 +783,50 @@ function toggleRepeat(type) {
 async function saveEntry() {
     const amount = document.getElementById('f-amount').value;
     const date = document.getElementById('f-date').value;
-    const desc = document.getElementById('f-desc').value;
-    if (!amount || !date || !desc) { showToast('Fill in required fields', true); return; }
+    if (!amount || !date) { showToast('Fill in required fields', true); return; }
 
-    const payload = {
-        amount, date, description: desc, desc, date, amount // support both variations
-    };
+    const payload = { amount, date };
 
     if (activeSheet === 'ED') {
         payload.category = document.getElementById('f-cat').value;
-        payload.cat = payload.category;
-        payload.payment_type = document.getElementById('f-payment').value;
-        payload.pay = payload.payment_type;
-        payload.quantity = document.getElementById('f-qty').value;
-        payload.qty = payload.quantity;
+        payload.description = document.getElementById('f-desc').value;
+        payload.weight = document.getElementById('f-qty').value;
         payload.unit = document.getElementById('f-unit').value;
+        payload.payment_type = document.getElementById('f-payment').value;
     } else if (activeSheet === 'MED') {
         payload.category = document.getElementById('f-cat').value;
-        payload.cat = payload.category;
+        payload.description = document.getElementById('f-desc').value;
         payload.payment_type = document.getElementById('f-payment').value;
-        payload.pay = payload.payment_type;
-        payload.quantity = document.getElementById('f-qty').value;
-        payload.qty = payload.quantity;
-        payload.unit = document.getElementById('f-unit').value;
         payload.repeat_bi_weekly = document.getElementById('f-biweekly').checked ? 'TRUE' : 'FALSE';
-        payload.bw = payload.repeat_bi_weekly;
         payload.repeat_monthly = document.getElementById('f-monthly').checked ? 'TRUE' : 'FALSE';
-        payload.mo = payload.repeat_monthly;
     } else if (activeSheet === 'ID') {
-        payload.company = (document.getElementById('f-company')?.value) || '';
-        payload.comp = payload.company;
-        payload.phone_bill = (document.getElementById('f-phone')?.value) || '';
-        payload.phone = payload.phone_bill;
-        payload.repeat_bi_weekly = document.getElementById('f-biweekly')?.checked ? 'TRUE' : 'FALSE';
-        payload.bw = payload.repeat_bi_weekly;
+        payload.name = document.getElementById('f-name').value;
+        payload.company = document.getElementById('f-company').value;
+        payload.phone_bill = document.getElementById('f-phone').value;
+        payload.repeat_bi_weekly = document.getElementById('f-biweekly').checked ? 'TRUE' : 'FALSE';
     }
 
-    const values = DS.mapFieldsToRow(activeSheet, payload);
+    // Manual mapping to ensure specific order
+    let values = [];
+    if (activeSheet === 'ED') {
+        // Category, Date, Description, Amount, Weight, Unit, Payment Type
+        values = [payload.category, payload.date, payload.description, payload.amount, payload.weight, payload.unit, payload.payment_type];
+    } else if (activeSheet === 'ID') {
+        // Name, Company, Date, Amount, Phone Bill, Repeat Bi Weekly
+        values = [payload.name, payload.company, payload.date, payload.amount, payload.phone_bill, payload.repeat_bi_weekly];
+    } else if (activeSheet === 'MED') {
+        // Category, Date, Description, Amount, Payment Type, Repeat Bi Weekly, Repeat Monthly
+        values = [payload.category, payload.date, payload.description, payload.amount, payload.payment_type, payload.repeat_bi_weekly, payload.repeat_monthly];
+    }
 
     showLoader(true);
     try {
         if (activeEntry) {
             await DS.api.updateRow(activeSheet, activeEntry._row, values);
-            showToast('✓ Updated in Google Sheets');
+            showToast('✓ Updated');
         } else {
             await DS.api.appendRow(activeSheet, values);
-            showToast('✓ Saved to Google Sheets');
+            showToast('✓ Saved');
         }
         await DS.refresh();
         closeSheet();
@@ -823,17 +849,80 @@ async function deleteEntry() {
     finally { showLoader(false); }
 }
 
-// ── Category Picker ───────────────────────────────────────────────────────────
-const CATEGORIES = {
+// ── Sidebar & Categories ───────────────────────────────────────────────────
+let CATEGORIES = {
     "Electronics": ["Anti Virus"],
     "Entertainment": ["Games", "Movies", "Others"],
     "Food": ["Coffee", "Dining Out", "Groceries", "Packaged Food"],
     "Home": ["Electronics", "Furniture", "Household Machines", "Household Supplies", "Insurance", "Maintenance", "Mortgage", "Rent", "Taxes"],
     "Life": ["Bank Account Fees", "Business", "Charity", "Clothing", "Credit Card Fees", "Donation", "Education", "Footwear", "Gifts", "Grooming", "India", "Insurance", "Investments", "Makeup & Skincare", "Medical Expenses", "Membership", "Other", "Parcels", "Shein", "Souvenir"],
-    "Liquor": ["Liquor"],
+    "Liquor": [],
     "Transportation": ["Bus", "Car", "Flight", "Gas", "Hotel", "Other", "Parking", "Taxi", "Train"],
     "Utilities": ["Electricity", "Heat", "Internet (Wi-Fi)", "Phone", "TV", "Water"]
 };
+
+// Load custom categories from local storage
+const storedCats = localStorage.getItem('custom_categories');
+if (storedCats) {
+    const parsed = JSON.parse(storedCats);
+    for (const group in parsed) {
+        if (!CATEGORIES[group]) CATEGORIES[group] = [];
+        CATEGORIES[group] = [...new Set([...CATEGORIES[group], ...parsed[group]])];
+    }
+}
+
+function toggleSidebar(show) {
+    const s = document.getElementById('sidebar');
+    const o = document.getElementById('sidebar-overlay');
+    if (show) {
+        o.style.display = 'block';
+        requestAnimationFrame(() => {
+            o.classList.add('show');
+            s.classList.add('show');
+        });
+    } else {
+        o.classList.remove('show');
+        s.classList.remove('show');
+        setTimeout(() => { o.style.display = 'none'; }, 300);
+    }
+}
+
+function renderSidebarCategories() {
+    const container = document.getElementById('sidebar-categories');
+    let html = '';
+    for (const group in CATEGORIES) {
+        html += `<div class="side-label">${group}</div>`;
+        if (CATEGORIES[group].length === 0) {
+             html += `<div class="side-item"><div class="side-item-icon">${catIcon(group)}</div><div class="side-name">${group}</div></div>`;
+        } else {
+            CATEGORIES[group].forEach(cat => {
+                const full = `${group} - ${cat}`;
+                html += `<div class="side-item"><div class="side-item-icon">${catIcon(full)}</div><div class="side-name">${cat}</div></div>`;
+            });
+        }
+    }
+    container.innerHTML = html;
+}
+
+function promptAddCategory() {
+    const name = prompt("Enter new category name (e.g. Life - Hobby):");
+    if (!name) return;
+    const parts = name.split(' - ');
+    const group = parts[0];
+    const cat = parts[1] || '';
+    
+    if (!CATEGORIES[group]) CATEGORIES[group] = [];
+    if (cat && !CATEGORIES[group].includes(cat)) CATEGORIES[group].push(cat);
+    
+    // Save to local storage
+    const custom = JSON.parse(localStorage.getItem('custom_categories') || '{}');
+    if (!custom[group]) custom[group] = [];
+    if (cat && !custom[group].includes(cat)) custom[group].push(cat);
+    localStorage.setItem('custom_categories', JSON.stringify(custom));
+    
+    renderSidebarCategories();
+    showToast(`Category "${name}" added`);
+}
 
 function showCategoryPicker() {
     const p = document.getElementById('cat-picker');
@@ -854,16 +943,24 @@ function renderCategories(q) {
     q = q.toLowerCase();
     let html = '';
     for (const group in CATEGORIES) {
-        const filtered = CATEGORIES[group].filter(c => c.toLowerCase().includes(q) || group.toLowerCase().includes(q));
-        if (filtered.length) {
-            html += `<div class="cat-group">${group}</div>`;
-            filtered.forEach(cat => {
-                html += `<div class="cat-item" onclick="selectCategory('${cat}')">${catIcon(cat)} ${cat}</div>`;
-            });
+        const groupMatch = group.toLowerCase().includes(q);
+        const cats = CATEGORIES[group];
+        
+        if (cats.length === 0) {
+            if (groupMatch) {
+                html += `<div class="cat-group">${group}</div>`;
+                html += `<div class="cat-item" onclick="selectCategory('${group}')">${catIcon(group)} ${group}</div>`;
+            }
+        } else {
+            const filtered = cats.filter(c => c.toLowerCase().includes(q) || groupMatch);
+            if (filtered.length) {
+                html += `<div class="cat-group">${group}</div>`;
+                filtered.forEach(cat => {
+                    const full = `${group} - ${cat}`;
+                    html += `<div class="cat-item" onclick="selectCategory('${full}')">${catIcon(full)} ${full}</div>`;
+                });
+            }
         }
-    }
-    if (q && !html) {
-        html = `<div class="cat-empty">No match.<br><button class="add-cat-btn" onclick="selectCategory('${q}')">Add "${q}"</button></div>`;
     }
     body.innerHTML = html;
 }
