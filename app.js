@@ -228,6 +228,7 @@ const CURRENCY = new Intl.NumberFormat('en-CA', { style: 'currency', currency: '
 const filters = {
     category: 'All',
     dateRange: 'AllTime',
+    search: '',
     show: false,
     activeSub: 'date' // 'date' or 'cat'
 };
@@ -235,6 +236,12 @@ const filters = {
 function toggleFilterBar() {
     filters.show = !filters.show;
     document.getElementById('filter-container').classList.toggle('show', filters.show);
+    if (filters.show) document.getElementById('global-search').focus();
+}
+
+function handleSearch(val) {
+    filters.search = val.toLowerCase();
+    renderTabContent();
 }
 
 function setFilterSub(sub) {
@@ -249,6 +256,12 @@ function setFilter(type, val) {
 
 function getFilteredData(items) {
     return items.filter(item => {
+        // Search Filter
+        if (filters.search) {
+            const desc = (item.description || item.name || item.company || '').toLowerCase();
+            if (!desc.includes(filters.search)) return false;
+        }
+
         // Category Filter
         if (filters.category !== 'All' && item.category !== filters.category) return false;
         
@@ -286,8 +299,8 @@ function renderFilterBar(items, sheet) {
 
     const html = `
         <div class="filter-types">
-            <button class="filter-type-btn ${filters.activeSub==='date'?'active':''}" onclick="setFilterSub('date')">📅 By Date</button>
-            ${sheet !== 'ID' ? `<button class="filter-type-btn ${filters.activeSub==='cat'?'active':''}" onclick="setFilterSub('cat')">🏷️ By Category</button>` : ''}
+            <button class="filter-type-btn ${filters.activeSub==='date'?'active':''}" onclick="setFilterSub('date')">📅 Date</button>
+            ${sheet !== 'ID' ? `<button class="filter-type-btn ${filters.activeSub==='cat'?'active':''}" onclick="setFilterSub('cat')">🏷️ Category</button>` : ''}
         </div>
         <div class="filter-bar">
             ${filters.activeSub === 'date' 
@@ -296,7 +309,7 @@ function renderFilterBar(items, sheet) {
             }
         </div>
     `;
-    document.getElementById('filter-container').innerHTML = html;
+    document.getElementById('filter-options').innerHTML = html;
 }
 
 function switchTab(tab) {
@@ -467,15 +480,28 @@ function renderItemList(items, sheet) {
             const amtCls = sheet === 'ID' ? 'amt-income' : (sheet === 'MED' ? 'amt-mandatory' : 'amt-expense');
             const prefix = sheet === 'ID' ? '+' : '-';
             const isLast = idx === grouped[date].items.length - 1;
-            html += `<div class="list-item${isLast ? ' last' : ''}" onclick="editEntry('${sheet}', ${item._row})">
-                <div class="item-icon">${icon}</div>
-                <div class="item-body">
-                    <div class="item-name">${name}</div>
-                    ${sub ? `<div class="item-sub">${sub}</div>` : ''}
+
+            html += `
+            <div class="item-wrapper">
+                <div class="swipe-actions">
+                    <div class="swipe-action-right">Copy 📋</div>
+                    <div class="swipe-action-left">Delete 🗑️</div>
                 </div>
-                <div class="item-right">
-                    <div class="${amtCls}">${prefix}${CURRENCY.format(parseFloat(item.amount)||0)}</div>
-                    <div class="item-chevron">›</div>
+                <div class="list-item${isLast ? ' last' : ''}" 
+                     data-row="${item._row}" data-sheet="${sheet}"
+                     onclick="editEntry('${sheet}', ${item._row})"
+                     ontouchstart="handleTouchStart(event)"
+                     ontouchmove="handleTouchMove(event)"
+                     ontouchend="handleTouchEnd(event)">
+                    <div class="item-icon">${icon}</div>
+                    <div class="item-body">
+                        <div class="item-name">${name}</div>
+                        ${sub ? `<div class="item-sub">${sub}</div>` : ''}
+                    </div>
+                    <div class="item-right">
+                        <div class="${amtCls}">${prefix}${CURRENCY.format(parseFloat(item.amount)||0)}</div>
+                        <div class="item-chevron">›</div>
+                    </div>
                 </div>
             </div>`;
         });
@@ -505,40 +531,29 @@ function getSubtext(item, sheet) {
     return parts.join(' · ');
 }
 
-// ── Expenses Tab ──────────────────────────────────────────────────────────────
+// ── Main Page Tabs (No charts here now) ──────────────────────────────────────
 function renderExpenses(c) {
     const items = DS.ed;
-    const filtered = getFilteredData(items);
     renderFilterBar(items, 'ED');
     c.innerHTML = `
         ${renderHeader('Expenses')}
-        ${renderChartSection(filtered, 'ED')}
         ${renderItemList(items, 'ED')}`;
-    setTimeout(() => updateChart(filtered, 'expenses'), 100);
 }
 
-// ── Mandatory Tab ─────────────────────────────────────────────────────────────
 function renderMandatory(c) {
     const items = DS.med;
-    const filtered = getFilteredData(items);
     renderFilterBar(items, 'MED');
     c.innerHTML = `
         ${renderHeader('Mandatory')}
-        ${renderChartSection(filtered, 'MED')}
         ${renderItemList(items, 'MED')}`;
-    setTimeout(() => updateChart(filtered, 'mandatory'), 100);
 }
 
-// ── Income Tab ────────────────────────────────────────────────────────────────
 function renderIncome(c) {
     const items = DS.id;
-    const filtered = getFilteredData(items);
     renderFilterBar(items, 'ID');
     c.innerHTML = `
         ${renderHeader('Income')}
-        ${renderChartSection(filtered, 'ID')}
         ${renderItemList(items, 'ID')}`;
-    setTimeout(() => updateChart(filtered, 'income'), 100);
 }
 
 // ── Analytics Tab ─────────────────────────────────────────────────────────────
@@ -554,9 +569,67 @@ function renderAnalytics(c) {
     
     c.innerHTML = `
         ${renderHeader(labels[analyticsSubTab] || 'Analytics')}
-        ${renderChartSection(filtered, analyticsSubTab)}
+        <div class="chart-card">
+            <div class="chart-container"><canvas id="analyticsChart"></canvas></div>
+            <div id="analyticsLegend" class="chart-legend"></div>
+        </div>
     `;
-    setTimeout(() => updateChart(filtered, analyticsSubTab), 100);
+    setTimeout(() => renderChartInAnalytics(filtered), 100);
+}
+
+function renderChartInAnalytics(data) {
+    const ctx = document.getElementById('analyticsChart')?.getContext('2d');
+    if (!ctx) return;
+    
+    const groups = {};
+    if (analyticsSubTab === 'expenses-cat') {
+        data.forEach(r => { const k = r.category || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
+    } else if (analyticsSubTab === 'expenses-card') {
+        data.forEach(r => { const k = r.payment_type || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
+    } else if (analyticsSubTab.includes('month')) {
+        data.forEach(r => { const k = (r.date || '').substring(0, 7) || 'Unknown'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
+    } else if (analyticsSubTab === 'income-company') {
+        data.forEach(r => { const k = r.company || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
+    }
+
+    const sorted = Object.entries(groups).sort((a,b) => b[1] - a[1]).slice(0, 8);
+    const labels = sorted.map(s => s[0]);
+    const values = sorted.map(s => s[1]);
+    const COLORS = ['#6366F1','#8B5CF6','#EC4899','#EF4444','#F59E0B','#10B981','#06B6D4','#3B82F6'];
+    const isPie = !analyticsSubTab.includes('month');
+
+    if (window.activeAnalyticsChart) window.activeAnalyticsChart.destroy();
+    
+    window.activeAnalyticsChart = new Chart(ctx, {
+        type: isPie ? 'doughnut' : 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: COLORS,
+                borderWidth: 0,
+                borderRadius: isPie ? 0 : 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: isPie ? {} : {
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(240,240,255,0.4)', font:{size:10} } },
+                x: { grid: { display: false }, ticks: { color: 'rgba(240,240,255,0.4)', font:{size:10} } }
+            }
+        }
+    });
+    
+    const legend = document.getElementById('analyticsLegend');
+    if (legend) legend.innerHTML = sorted.map(([label, val], i) => `
+        <div class="legend-item">
+            <div class="legend-color" style="background:${COLORS[i % COLORS.length]}"></div>
+            <div class="legend-label">${label}</div>
+            <div class="legend-val">${CURRENCY.format(val)}</div>
+        </div>
+    `).join('');
 }
 
 function renderChart(data) {
@@ -940,7 +1013,6 @@ function switchSidebarTab(tab, sub = null) {
 
 function renderSidebar() {
     const container = document.getElementById('sidebar-categories');
-    
     let html = `
         <div class="side-label">Navigation</div>
         <div class="side-item ${currentTab==='expenses'?'active':''}" onclick="switchSidebarTab('expenses')"><div class="side-item-icon">💸</div>Expenses</div>
@@ -955,23 +1027,113 @@ function renderSidebar() {
         <div class="side-item ${analyticsSubTab==='income-month'&&currentTab==='analytics'?'active':''}" onclick="switchSidebarTab('analytics', 'income-month')"><div class="side-item-icon">📈</div>Income / Month</div>
 
         <div class="side-label">Account</div>
+        <div class="side-item" onclick="toggleCategoryManage(true)"><div class="side-item-icon">🏷️</div>Manage Categories</div>
         <div class="side-item" onclick="handleSignOut()"><div class="side-item-icon">🚪</div>Sign Out</div>
-
-        <div class="side-label">Categories</div>
     `;
-    
+    container.innerHTML = html;
+}
+
+function toggleCategoryManage(show) {
+    const view = document.getElementById('cat-manage-view');
+    view.classList.toggle('show', show);
+    if (show) {
+        toggleSidebar(false);
+        renderCategoryManageList();
+    }
+}
+
+function renderCategoryManageList() {
+    const list = document.getElementById('cat-manage-list');
+    let html = '';
     for (const group in CATEGORIES) {
+        html += `<div class="side-label">${group}</div>`;
         const cats = CATEGORIES[group];
         if (cats.length === 0) {
              html += `<div class="side-item"><div class="side-item-icon">${catIcon(group)}</div><div class="side-name">${group}</div></div>`;
         } else {
             cats.forEach(cat => {
                 const full = `${group} - ${cat}`;
-                html += `<div class="side-item"><div class="side-item-icon">${catIcon(full)}</div><div class="side-name" style="font-size:12px; opacity:0.8;">${cat}</div></div>`;
+                html += `<div class="side-item"><div class="side-item-icon">${catIcon(full)}</div><div class="side-name">${cat}</div></div>`;
             });
         }
     }
-    container.innerHTML = html;
+    list.innerHTML = html;
+}
+
+// ── Swipe Logic ───────────────────────────────────────────────────────────────
+let touchStartX = 0;
+let currentSwipeItem = null;
+
+function handleTouchStart(e) {
+    touchStartX = e.touches[0].clientX;
+    currentSwipeItem = e.currentTarget;
+}
+
+function handleTouchMove(e) {
+    if (!currentSwipeItem) return;
+    const diff = e.touches[0].clientX - touchStartX;
+    if (Math.abs(diff) > 20) {
+        const trans = Math.max(-100, Math.min(100, diff));
+        currentSwipeItem.style.transform = `translateX(${trans}px)`;
+        currentSwipeItem.style.transition = 'none';
+    }
+}
+
+async function handleTouchEnd(e) {
+    if (!currentSwipeItem) return;
+    const diff = e.changedTouches[0].clientX - touchStartX;
+    const sheet = currentSwipeItem.dataset.sheet;
+    const row = parseInt(currentSwipeItem.dataset.row);
+
+    if (diff > 60) { // Swipe Right - Copy
+        currentSwipeItem.style.transform = `translateX(100%)`;
+        setTimeout(() => {
+            currentSwipeItem.style.transform = '';
+            copyEntry(sheet, row);
+        }, 200);
+    } else if (diff < -60) { // Swipe Left - Delete
+        currentSwipeItem.style.transform = `translateX(-100%)`;
+        setTimeout(async () => {
+            currentSwipeItem.style.transform = '';
+            if (confirm('Delete this transaction?')) {
+                activeSheet = sheet;
+                await deleteEntry(row);
+            }
+        }, 200);
+    } else {
+        currentSwipeItem.style.transform = '';
+        currentSwipeItem.style.transition = 'transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28)';
+    }
+    currentSwipeItem = null;
+}
+
+function copyEntry(sheet, rowIndex) {
+    const store = sheet === 'ED' ? DS.ed : sheet === 'MED' ? DS.med : DS.id;
+    const entry = store.find(r => r._row === rowIndex);
+    if (!entry) return;
+    
+    // Open as Add but with populate values
+    activeSheet = sheet;
+    activeEntry = null; // Important: this is a NEW entry
+    const labels = { ED: 'Expense', MED: 'Mandatory', ID: 'Income' };
+    document.getElementById('sheet-title').textContent = `Copy ${labels[activeSheet]}`;
+    document.getElementById('delete-btn').style.display = 'none';
+    buildForm();
+    
+    // Populate
+    if (document.getElementById('f-amount')) document.getElementById('f-amount').value = entry.amount || '';
+    if (document.getElementById('f-date')) document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+    if (document.getElementById('f-desc')) document.getElementById('f-desc').value = entry.description || entry.desc || '';
+    if (document.getElementById('f-cat')) {
+        document.getElementById('f-cat').value = entry.category || '';
+        document.getElementById('f-cat-display').textContent = (entry.category ? `${catIcon(entry.category)} ${entry.category}` : 'Select Category');
+    }
+    if (document.getElementById('f-payment')) document.getElementById('f-payment').value = entry.payment_type || '';
+    if (document.getElementById('f-name')) document.getElementById('f-name').value = entry.name || '';
+    if (document.getElementById('f-company')) document.getElementById('f-company').value = entry.company || '';
+    
+    openSheet();
+    showToast('Transaction copied. Ready to save.');
 }
 
 function promptAddCategory() {
