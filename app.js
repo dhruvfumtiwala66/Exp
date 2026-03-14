@@ -237,6 +237,7 @@ const filters = {
 function toggleFilterBar() {
     filters.show = !filters.show;
     document.getElementById('filter-container').classList.toggle('show', filters.show);
+    // document.querySelector('.filter-toggle-icon').textContent = filters.show ? '✕' : '🔍'; // Optional
     if (filters.show) {
         document.getElementById('global-search').focus();
         renderFilterBarControls();
@@ -258,7 +259,6 @@ function setFilter(type, val) {
         if (val === 'All') {
             filters.categories = ['All'];
         } else {
-            // Remove 'All' if it exists
             const idxAll = filters.categories.indexOf('All');
             if (idxAll > -1) filters.categories.splice(idxAll, 1);
 
@@ -270,14 +270,21 @@ function setFilter(type, val) {
                 filters.categories.push(val);
             }
         }
+        renderFilterBarControls(); // Refresh the multi-select UI
     } else {
         filters[type] = val;
     }
     renderTabContent();
 }
 
+function setFilterSub(sub) {
+    filters.activeSub = sub;
+    renderFilterBarControls();
+}
+
 function renderFilterBarControls() {
-    const items = currentTab === 'expenses' ? DS.ed : (currentTab === 'mandatory' ? DS.med : DS.id);
+    const items = (currentTab === 'expenses' || currentTab === 'analytics' && analyticsSubTab.startsWith('expenses')) ? DS.ed : 
+                 (currentTab === 'mandatory' ? DS.med : DS.id);
     renderFilterBar(items, currentTab === 'expenses' ? 'ED' : (currentTab === 'mandatory' ? 'MED' : 'ID'));
 }
 
@@ -316,27 +323,50 @@ function getFilteredData(items) {
 }
 
 function renderFilterBar(items, sheet) {
-    const cats = ['All', ...new Set(items.map(i => i.category).filter(Boolean))].sort();
+    const cats = [...new Set(items.map(i => i.category).filter(Boolean))].sort();
 
-    const dateHtml = `
-        <div class="date-input-group">
-            <label>Start Date</label>
-            <input type="date" class="date-picker" value="${filters.startDate}" onchange="setFilter('startDate', this.value)">
-        </div>
-        <div class="date-input-group">
-            <label>End Date</label>
-            <input type="date" class="date-picker" value="${filters.endDate}" onchange="setFilter('endDate', this.value)">
-        </div>
+    const tabHtml = `
+        <button class="filter-tab-btn ${filters.activeSub==='date'?'active':''}" onclick="setFilterSub('date')">📅 Date Range</button>
+        <button class="filter-tab-btn ${filters.activeSub==='cat'?'active':''}" onclick="setFilterSub('cat')">🏷️ Categories</button>
     `;
 
-    const catHtml = `
-        <div class="filter-bar">
-            ${cats.map(c => `<div class="filter-chip ${filters.categories.includes(c)?'active':''}" onclick="setFilter('category', '${c}')">${c}</div>`).join('')}
-        </div>
-    `;
+    let optionsHtml = '';
+    if (filters.activeSub === 'date') {
+        optionsHtml = `
+            <div class="date-range-section active">
+                <div class="date-range-inputs">
+                    <div class="date-input-group">
+                        <label>Start Date</label>
+                        <input type="date" class="date-picker" value="${filters.startDate}" onchange="setFilter('startDate', this.value)">
+                    </div>
+                    <div class="date-input-group">
+                        <label>End Date</label>
+                        <input type="date" class="date-picker" value="${filters.endDate}" onchange="setFilter('endDate', this.value)">
+                    </div>
+                </div>
+            </div>
+        `;
+    } else {
+        optionsHtml = `
+            <div class="category-select-section active">
+                <div class="multi-select-dropdown">
+                    <div class="multi-select-item all" onclick="setFilter('category', 'All')">
+                        <input type="checkbox" ${filters.categories.includes('All') ? 'checked' : ''} readonly>
+                        <div class="label">All Categories</div>
+                    </div>
+                    ${cats.map(c => `
+                        <div class="multi-select-item" onclick="setFilter('category', '${c}')">
+                            <input type="checkbox" ${filters.categories.includes(c) ? 'checked' : ''} readonly>
+                            <div class="label">${c}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
 
-    document.getElementById('date-range-controls').innerHTML = dateHtml;
-    document.getElementById('filter-options').innerHTML = catHtml;
+    document.getElementById('filter-tab-bar').innerHTML = tabHtml;
+    document.getElementById('filter-options-content').innerHTML = optionsHtml;
 }
 
 function switchTab(tab) {
@@ -380,7 +410,9 @@ function renderHeader(title, hasFilters = true) {
                 <h1 class="page-title">${title}</h1>
             </div>
             <div class="header-right">
-                ${hasFilters ? `<button class="refresh-btn ${filters.show ? 'active' : ''}" onclick="toggleFilterBar()" title="Filter" style="margin-right:8px; font-size:16px;">🔍</button>` : ''}
+                ${hasFilters ? `<button class="refresh-btn ${filters.show ? 'active' : ''}" onclick="toggleFilterBar()" title="Filter" style="margin-right:8px; font-size:16px;">
+                    <svg viewBox="0 0 24 24" style="width:20px; height:20px;"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+                </button>` : ''}
                 <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
             </div>
         </div>`;

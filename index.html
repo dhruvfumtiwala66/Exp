@@ -137,7 +137,7 @@ body{
     border-bottom: 1px solid var(--border);
 }
 #filter-container.show {
-    max-height: 420px;
+    max-height: 500px; /* Increased for dropdown */
 }
 .search-group {
     padding: 12px 16px 8px;
@@ -154,13 +154,13 @@ body{
     font-family: inherit;
     outline: none;
 }
-.filter-types {
+.filter-tabs {
   display: flex;
   gap: 12px;
   padding: 12px 16px 8px;
   border-bottom: 1px solid var(--sep);
 }
-.filter-type-btn {
+.filter-tab-btn {
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--t2);
@@ -169,17 +169,28 @@ body{
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.filter-type-btn.active {
+.filter-tab-btn.active {
   background: var(--surface3);
   border-color: var(--blue);
   color: var(--blue2);
 }
+
+.date-range-section, .category-select-section {
+    display: none;
+    padding: 12px 16px;
+}
+.date-range-section.active, .category-select-section.active {
+    display: block;
+}
+
 .date-range-inputs {
     display: flex;
     gap: 8px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--sep);
+    margin-bottom: 12px;
 }
 .date-input-group {
     flex: 1;
@@ -203,20 +214,39 @@ body{
     font-size: 13px;
     outline: none;
 }
-.filter-bar{
-  display:flex;gap:8px;padding:12px 16px;
-  overflow-x:auto;-webkit-overflow-scrolling:touch;
+
+/* Multi-select Dropdown Style */
+.multi-select-dropdown {
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
 }
-.filter-bar::-webkit-scrollbar{display:none;}
-.filter-chip{
-  background:var(--surface2);border:1px solid var(--border);
-  color:var(--t3);padding:6px 14px;border-radius:100px;
-  font-size:12px;font-weight:600;white-space:nowrap;
-  cursor:pointer;transition:all .2s;
+.multi-select-item {
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--sep);
+    transition: background 0.2s;
 }
-.filter-chip.active{
-  background:var(--blue);border-color:var(--blue);
-  color:#fff;
+.multi-select-item:last-child { border-bottom: none; }
+.multi-select-item:hover { background: var(--surface3); }
+.multi-select-item input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--blue);
+}
+.multi-select-item .label {
+    font-size: 14px;
+    color: var(--t1);
+    font-weight: 500;
+}
+.multi-select-item.all {
+    background: var(--surface3);
+    font-weight: 700;
 }
 
 .refresh-btn:active{background:var(--surface3);}
@@ -642,8 +672,8 @@ body{
       <div class="search-group">
         <input type="text" id="global-search" class="search-input" placeholder="Search description..." oninput="handleSearch(this.value)">
       </div>
-      <div id="date-range-controls" class="date-range-inputs"></div>
-      <div id="filter-options"></div>
+      <div id="filter-tab-bar" class="filter-tabs"></div>
+      <div id="filter-options-content"></div>
     </div>
     <div id="tab-content"></div>
 
