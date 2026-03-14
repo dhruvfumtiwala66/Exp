@@ -27,13 +27,16 @@ function init() {
     const params = new URLSearchParams(hash);
     const tokenFromHash = params.get('access_token');
     if (tokenFromHash) {
-        sessionStorage.setItem('google_token', tokenFromHash);
+        localStorage.setItem('google_token', tokenFromHash);
         window.history.replaceState({}, document.title, window.location.pathname);
         state.token = tokenFromHash;
         checkSetup(); return;
     }
-    const stored = sessionStorage.getItem('google_token');
-    if (stored) { state.token = stored; checkSetup(); }
+    const stored = localStorage.getItem('google_token');
+    if (stored) { 
+        state.token = stored; 
+        checkSetup(); 
+    }
     else { document.getElementById('signin-screen').style.display = 'flex'; }
 }
 
@@ -43,7 +46,7 @@ function handleSignIn() {
 }
 
 function handleSignOut() {
-    sessionStorage.removeItem('google_token');
+    localStorage.removeItem('google_token');
     localStorage.removeItem('spreadsheetId');
     window.location.reload();
 }
@@ -74,6 +77,10 @@ class SheetsAPI {
             headers: { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json', ...opts.headers }
         });
         if (!res.ok) {
+            if (res.status === 401) {
+                handleSignOut();
+                throw new Error('Session expired. Please sign in again.');
+            }
             const e = await res.json().catch(() => ({ error: { message: 'Network error' } }));
             throw new Error(e.error?.message || `HTTP ${res.status}`);
         }
@@ -110,6 +117,7 @@ class SheetsAPI {
 // ── DataStore ─────────────────────────────────────────────────────────────────
 const DS = {
     ed: [], id: [], med: [], api: null,
+    headers: { ED: [], ID: [], MED: [] },
     async init(token, spreadsheetId) {
         this.api = new SheetsAPI(token, spreadsheetId);
         await this.refresh();
@@ -117,24 +125,61 @@ const DS = {
     async refresh() {
         showLoader(true);
         try {
-            const [ed, id, med] = await Promise.all([
-                this.api.fetchSheet('ED'),
-                this.api.fetchSheet('ID'),
-                this.api.fetchSheet('MED')
+            const [edRes, idRes, medRes] = await Promise.all([
+                this.api.req(`/values/ED`),
+                this.api.req(`/values/ID`),
+                this.api.req(`/values/MED`)
             ]);
-            this.ed = this.parse(ed);
-            this.id = this.parse(id);
-            this.med = this.parse(med);
+            
+            this.headers.ED = (edRes.values && edRes.values[0]) || [];
+            this.headers.ID = (idRes.values && idRes.values[0]) || [];
+            this.headers.MED = (medRes.values && medRes.values[0]) || [];
+
+            this.ed = this.parse(edRes.values || [], 'ED');
+            this.id = this.parse(idRes.values || [], 'ID');
+            this.med = this.parse(medRes.values || [], 'MED');
         } catch (err) { showToast(err.message, true); throw err; }
         finally { showLoader(false); }
     },
-    parse(rows) {
-        if (rows.length < 2) return [];
-        const headers = rows[0];
+    parse(rows, sheetName) {
+        if (rows.length < 1) return [];
+        const headers = rows[0].map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
         return rows.slice(1).map((row, i) => {
             const obj = { _row: i + 2 };
-            headers.forEach((h, j) => { obj[h.trim().toLowerCase().replace(/\s+/g, '_')] = (row[j] || '').trim(); });
+            headers.forEach((h, j) => { 
+                if (h) obj[h] = (row[j] || '').trim(); 
+            });
             return obj;
+        });
+    },
+    mapFieldsToRow(sheetName, data) {
+        const sheetHeaders = this.headers[sheetName];
+        if (!sheetHeaders.length) throw new Error(`Headers for ${sheetName} not found.`);
+        
+        // Map common app keys to potential header variations
+        const keyMap = {
+            'cat': 'category',
+            'desc': 'description',
+            'amt': 'amount',
+            'qty': 'quantity',
+            'pay': 'payment_type',
+            'bw': 'repeat_bi_weekly',
+            'mo': 'repeat_monthly',
+            'comp': 'company',
+            'phone': 'phone_bill'
+        };
+
+        return sheetHeaders.map(h => {
+            const cleanH = h.trim().toLowerCase().replace(/\s+/g, '_');
+            // Try to find value by clean header name or mapped key
+            if (data[cleanH] !== undefined) return data[cleanH];
+            
+            // Check mapping
+            for (const [appKey, sheetKey] of Object.entries(keyMap)) {
+                if (cleanH === sheetKey && data[appKey] !== undefined) return data[appKey];
+                if (cleanH === appKey && data[appKey] !== undefined) return data[appKey];
+            }
+            return ''; // Default empty if no match
         });
     }
 };
@@ -174,6 +219,64 @@ async function bootstrapApp() {
 let currentTab = 'expenses';
 const CURRENCY = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' });
 
+const filters = {
+    category: 'All',
+    dateRange: 'AllTime' // AllTime, ThisMonth, LastMonth, 30Days
+};
+
+function setFilter(type, val) {
+    filters[type] = val;
+    renderTabContent();
+}
+
+function getFilteredData(items) {
+    return items.filter(item => {
+        // Category Filter
+        if (filters.category !== 'All' && item.category !== filters.category) return false;
+        
+        // Date Filter
+        if (filters.dateRange === 'AllTime') return true;
+        if (!item.date) return false;
+        
+        const itemDate = new Date(item.date + 'T00:00:00');
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        if (filters.dateRange === 'ThisMonth') {
+            return itemDate.getMonth() === now.getMonth() && itemDate.getFullYear() === now.getFullYear();
+        }
+        if (filters.dateRange === 'LastMonth') {
+            const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            return itemDate.getMonth() === lastMonth.getMonth() && itemDate.getFullYear() === lastMonth.getFullYear();
+        }
+        if (filters.dateRange === '30Days') {
+            const thirtyDaysAgo = new Date(today.getTime() - (30 * 24 * 60 * 60 * 1000));
+            return itemDate >= thirtyDaysAgo;
+        }
+        return true;
+    });
+}
+
+function renderFilterBar(items, sheet) {
+    const cats = ['All', ...new Set(items.map(i => i.category).filter(Boolean))].sort();
+    const dateRanges = [
+        {id:'AllTime', label:'All Time'},
+        {id:'ThisMonth', label:'This Month'},
+        {id:'LastMonth', label:'Last Month'},
+        {id:'30Days', label:'Last 30 Days'}
+    ];
+
+    return `
+        <div class="filter-bar">
+            ${dateRanges.map(dr => `<div class="filter-chip ${filters.dateRange===dr.id?'active':''}" onclick="setFilter('dateRange', '${dr.id}')">${dr.label}</div>`).join('')}
+        </div>
+        ${sheet !== 'ID' ? `
+        <div class="filter-bar">
+            ${cats.map(c => `<div class="filter-chip ${filters.category===c?'active':''}" onclick="setFilter('category', '${c}')">${c}</div>`).join('')}
+        </div>` : ''}
+    `;
+}
+
 function switchTab(tab) {
     currentTab = tab;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -193,14 +296,14 @@ function renderTabContent() {
 
 // ── Render Helpers ────────────────────────────────────────────────────────────
 const CAT_ICONS = {
-    'Groceries':'🛒','Restaurants':'🍽️','Coffee':'☕','Alcohol':'🍺',
-    'Rent':'🏠','Electricity':'⚡','Water':'💧','Gas':'🔥','Internet':'📶','Maintenance':'🔧',
-    'Public Transit':'🚌','Uber/Lyft':'🚗','Parking':'🅿️','Insurance':'🛡️',
-    'Subscriptions':'📺','Movies':'🎬','Hobbies':'🎨','Games':'🎮','Events':'🎉',
-    'Clothing':'👕','Electronics':'💻','Home Goods':'🏡','Pharmacy':'💊','Beauty':'💅',
-    'Interest':'📈','Fees':'💸','Savings Transfer':'🏦','Loan Payment':'💳',
-    'Office Supplies':'📎','Software':'💾','Travel':'✈️','Meals':'🍱',
-    'Gifts':'🎁','Donations':'❤️','Uncategorized':'📦'
+    'Anti Virus':'🛡️',
+    'Games':'🎮','Movies':'🎬','Others':'🎭',
+    'Coffee':'☕','Dining Out':'🍽️','Groceries':'🛒','Packaged Food':'🍱',
+    'Electronics':'💻','Furniture':'🛋️','Household Machines':'🧺','Household Supplies':'🧻','Insurance':'🛡️','Maintenance':'🔧','Mortgage':'🏦','Rent':'🏠','Taxes':'📄',
+    'Bank Account Fees':'💸','Business':'💼','Charity':'❤️','Clothing':'👕','Credit Card Fees':'💳','Donation':'🎁','Education':'🎓','Footwear':'👟','Gifts':'🎁','Grooming':'🪮','India':'🇮🇳','Investments':'📈','Makeup & Skincare':'💄','Medical Expenses':'🏥','Membership':'💳','Other':'📦','Parcels':'📦','Shein':'🛍️','Souvenir':'🧸',
+    'Liquor':'🍺',
+    'Bus':'🚌','Car':'🚗','Flight':'✈️','Gas':'⛽','Hotel':'🏨','Other':'🚗','Parking':'🅿️','Taxi':'🚕','Train':'🚆',
+    'Electricity':'⚡','Heat':'🔥','Internet (Wi-Fi)':'📶','Phone':'📱','TV':'📺','Water':'💧'
 };
 
 function catIcon(cat) { return CAT_ICONS[cat] || '💰'; }
@@ -223,26 +326,34 @@ function renderSummaryCard(gradient, topLabel, topValue, left, right) {
 }
 
 function renderItemList(items, sheet) {
-    if (!items.length) return `<div class="empty-state"><div class="empty-icon">📭</div><div>No entries yet</div><div class="empty-sub">Tap + to add one</div></div>`;
-    const sorted = [...items].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const filtered = getFilteredData(items);
+    if (!filtered.length) return `<div class="empty-state"><div class="empty-icon">📭</div><div>No entries match your filters</div><div class="empty-sub">Try changing your filter settings</div></div>`;
+    
+    // Sort descending by date
+    const sorted = [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    
     const grouped = {};
     sorted.forEach(item => {
         const key = item.date || 'No Date';
-        if (!grouped[key]) grouped[key] = [];
-        grouped[key].push(item);
+        if (!grouped[key]) grouped[key] = { items: [], total: 0 };
+        grouped[key].items.push(item);
+        grouped[key].total += (parseFloat(item.amount) || 0);
     });
     let html = '';
     for (const date in grouped) {
         html += `<div class="date-section">
-            <div class="date-label">${formatDate(date)}</div>
+            <div class="date-label">
+                <span>${formatDate(date)}</span>
+                <span style="opacity: 0.8;">${CURRENCY.format(grouped[date].total)}</span>
+            </div>
             <div class="list-card">`;
-        grouped[date].forEach((item, idx) => {
+        grouped[date].items.forEach((item, idx) => {
             const name = item.description || item.name || item.company || 'Unnamed';
             const sub = getSubtext(item, sheet);
             const icon = sheet === 'ID' ? '💼' : (sheet === 'MED' ? '📅' : catIcon(item.category));
             const amtCls = sheet === 'ID' ? 'amt-income' : (sheet === 'MED' ? 'amt-mandatory' : 'amt-expense');
             const prefix = sheet === 'ID' ? '+' : '-';
-            const isLast = idx === grouped[date].length - 1;
+            const isLast = idx === grouped[date].items.length - 1;
             html += `<div class="list-item${isLast ? ' last' : ''}" onclick="editEntry('${sheet}', ${item._row})">
                 <div class="item-icon">${icon}</div>
                 <div class="item-body">
@@ -267,23 +378,23 @@ function getSubtext(item, sheet) {
         if (item.repeat_bi_weekly === 'TRUE') parts.push('Bi-weekly');
         return parts.join(' · ');
     }
-    if (sheet === 'MED') {
-        const parts = [];
-        if (item.category) parts.push(item.category);
-        if (item.repeat_bi_weekly === 'TRUE') parts.push('Bi-weekly');
-        else if (item.repeat_monthly === 'TRUE') parts.push('Monthly');
-        return parts.join(' · ');
-    }
     const parts = [];
+    if (item.quantity && item.unit) parts.push(`${item.quantity} ${item.unit}`);
+    else if (item.unit) parts.push(item.unit);
+    
     if (item.category) parts.push(item.category);
     if (item.payment_type) parts.push(item.payment_type);
+
+    if (sheet === 'MED') {
+        if (item.repeat_bi_weekly === 'TRUE') parts.push('Bi-weekly');
+        else if (item.repeat_monthly === 'TRUE') parts.push('Monthly');
+    }
     return parts.join(' · ');
 }
 
 // ── Expenses Tab ──────────────────────────────────────────────────────────────
 function renderExpenses(c) {
     const items = DS.ed;
-    const total = items.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
     const now = new Date();
     const thisMonth = items.filter(r => r.date && r.date.startsWith(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`));
     const monthTotal = thisMonth.reduce((s, r) => s + (parseFloat(r.amount)||0), 0);
@@ -295,6 +406,7 @@ function renderExpenses(c) {
             {label:'TOTAL ENTRIES', value: items.length},
             {label:'DAILY AVG', value: CURRENCY.format(monthTotal / (new Date(now.getFullYear(), now.getMonth()+1, 0).getDate()))}
         )}
+        ${renderFilterBar(items, 'ED')}
         ${renderItemList(items, 'ED')}`;
 }
 
@@ -312,6 +424,7 @@ function renderMandatory(c) {
             {label:'BI-WEEKLY ×2', value: CURRENCY.format(bw)},
             {label:'MONTHLY', value: CURRENCY.format(mo)}
         )}
+        ${renderFilterBar(items, 'MED')}
         ${renderItemList(items, 'MED')}`;
 }
 
@@ -366,12 +479,30 @@ function renderAnalyticsBody() {
     const mandTotal = mandBW + mandMO;
     const expTotal = expenses.reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
 
+    // Visual Analysis Cards (Top Metrics)
+    const sortedByAmt = [...expenses].sort((a,b) => (parseFloat(b.amount)||0) - (parseFloat(a.amount)||0));
+    const maxExpense = sortedByAmt[0];
+    const avgTrans = expTotal / (expenses.length || 1);
+
+    const cardUsage = {};
+    expenses.forEach(r => { if(r.payment_type) cardUsage[r.payment_type] = (cardUsage[r.payment_type]||0) + (parseFloat(r.amount)||0); });
+    const topCard = Object.entries(cardUsage).sort((a,b)=>b[1]-a[1])[0];
+
+    const statsHtml = `
+        <div class="an-grid">
+            <div class="an-stat-card"><div class="an-stat-label">BIGGEST SPEND</div><div class="an-stat-val">${maxExpense ? CURRENCY.format(maxExpense.amount) : '$0'}</div><div class="an-stat-sub">${maxExpense?.description || 'None'}</div></div>
+            <div class="an-stat-card"><div class="an-stat-label">TOP CARD</div><div class="an-stat-val" style="font-size:14px; line-height:1.2;">${topCard ? topCard[0] : 'None'}</div><div class="an-stat-sub">${topCard ? CURRENCY.format(topCard[1]) : ''}</div></div>
+            <div class="an-stat-card"><div class="an-stat-label">AVG TRANS</div><div class="an-stat-val">${CURRENCY.format(avgTrans)}</div><div class="an-stat-sub">${expenses.length} Trans</div></div>
+            <div class="an-stat-card"><div class="an-stat-label">TOTAL SPENT</div><div class="an-stat-val">${CURRENCY.format(expTotal)}</div><div class="an-stat-sub">Across all time</div></div>
+        </div>
+    `;
+
     if (analyticView === 'Cash Flow') {
         const net = incomeTotal - expTotal - mandTotal;
         const savRate = incomeTotal > 0 ? (net / incomeTotal) * 100 : 0;
         const hColor = savRate > 20 ? '#10B981' : (savRate > 0 ? '#F59E0B' : '#EF4444');
         const maxBar = Math.max(incomeTotal, expTotal, mandTotal, 1);
-        body.innerHTML = `
+        body.innerHTML = statsHtml + `
             <div class="an-card">
                 ${barRow('Income', incomeTotal, maxBar, '#10B981')}
                 ${barRow('Expenses', expTotal, maxBar, '#EF4444')}
@@ -381,12 +512,6 @@ function renderAnalyticsBody() {
                 <div class="an-card-title">Budget Health — ${Math.round(savRate)}% Saved</div>
                 <div class="health-bar-bg"><div class="health-bar-fill" style="width:${Math.max(0,Math.min(100,savRate+50))}%;background:${hColor};"></div></div>
                 <p class="an-hint">Savings rate relative to 0% baseline.</p>
-            </div>
-            <div class="kpi-grid">
-                <div class="kpi-card"><div class="kpi-label">NET REMAINING</div><div class="kpi-val" style="color:${net>=0?'#10B981':'#EF4444'}">${CURRENCY.format(net)}</div></div>
-                <div class="kpi-card"><div class="kpi-label">SAVINGS RATE</div><div class="kpi-val">${Math.round(savRate)}%</div></div>
-                <div class="kpi-card"><div class="kpi-label">TOTAL INCOME</div><div class="kpi-val">${CURRENCY.format(incomeTotal)}</div></div>
-                <div class="kpi-card"><div class="kpi-label">TOTAL SPEND</div><div class="kpi-val">${CURRENCY.format(expTotal)}</div></div>
             </div>`;
         return;
     }
@@ -401,16 +526,7 @@ function renderAnalyticsBody() {
     const maxVal = sorted.length ? sorted[0][1] : 1;
 
     const COLORS = ['#667eea','#764ba2','#f093fb','#f5576c','#4facfe','#43e97b','#fa709a','#fee140'];
-    let html = `<div class="an-card">${sorted.map(([label, val], i) => barRow(label||'Other', val, maxVal, COLORS[i % COLORS.length])).join('')}</div>`;
-
-    if (analyticView === 'Category') {
-        html += `<div class="kpi-grid">
-            <div class="kpi-card"><div class="kpi-label">TOTAL SPENT</div><div class="kpi-val">${CURRENCY.format(expTotal)}</div></div>
-            <div class="kpi-card"><div class="kpi-label">TRANSACTIONS</div><div class="kpi-val">${expenses.length}</div></div>
-            <div class="kpi-card"><div class="kpi-label">CATEGORIES</div><div class="kpi-val">${sorted.length}</div></div>
-            <div class="kpi-card"><div class="kpi-label">AVG TRANS</div><div class="kpi-val">${CURRENCY.format(expTotal/(expenses.length||1))}</div></div>
-        </div>`;
-    }
+    let html = statsHtml + `<div class="an-card">${sorted.map(([label, val], i) => barRow(label||'Other', val, maxVal, COLORS[i % COLORS.length])).join('')}</div>`;
     body.innerHTML = html;
 }
 
@@ -466,24 +582,27 @@ function editEntry(sheet, rowIndex) {
     // Populate fields
     document.getElementById('f-amount').value = entry.amount || '';
     document.getElementById('f-date').value = entry.date || '';
-    document.getElementById('f-desc').value = entry.description || entry.name || '';
+    document.getElementById('f-desc').value = entry.description || entry.name || entry.desc || '';
     if (sheet === 'ED' || sheet === 'MED') {
-        document.getElementById('f-cat').value = entry.category || '';
-        document.getElementById('f-cat-display').textContent = entry.category || 'Select Category';
+        const cat = entry.category || entry.cat || '';
+        document.getElementById('f-cat').value = cat;
+        document.getElementById('f-cat-display').textContent = (cat ? `${catIcon(cat)} ${cat}` : 'Select Category');
+        if (document.getElementById('f-qty')) document.getElementById('f-qty').value = entry.quantity || entry.qty || '';
+        if (document.getElementById('f-unit')) document.getElementById('f-unit').value = entry.unit || '';
         if (document.getElementById('f-payment'))
-            document.getElementById('f-payment').value = entry.payment_type || 'Credit Card';
+            document.getElementById('f-payment').value = entry.payment_type || entry.pay || '';
     }
     if (sheet === 'MED') {
-        document.getElementById('f-biweekly').checked = entry.repeat_bi_weekly === 'TRUE';
-        document.getElementById('f-monthly').checked = entry.repeat_monthly === 'TRUE';
+        document.getElementById('f-biweekly').checked = (entry.repeat_bi_weekly || entry.bw) === 'TRUE';
+        document.getElementById('f-monthly').checked = (entry.repeat_monthly || entry.mo) === 'TRUE';
     }
     if (sheet === 'ID') {
         if (document.getElementById('f-company'))
-            document.getElementById('f-company').value = entry.company || '';
+            document.getElementById('f-company').value = entry.company || entry.comp || '';
         if (document.getElementById('f-phone'))
-            document.getElementById('f-phone').value = entry.phone_bill || '';
+            document.getElementById('f-phone').value = entry.phone_bill || entry.phone || '';
         if (document.getElementById('f-biweekly'))
-            document.getElementById('f-biweekly').checked = entry.repeat_bi_weekly === 'TRUE';
+            document.getElementById('f-biweekly').checked = (entry.repeat_bi_weekly || entry.bw) === 'TRUE';
     }
     openSheet();
 }
@@ -512,13 +631,38 @@ function buildForm() {
             <div id="f-cat-display" class="form-value">Select Category</div>
             <input type="hidden" id="f-cat">
         </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <div class="form-group">
+                <label>QUANTITY</label>
+                <input type="number" id="f-qty" placeholder="1.0" step="0.01">
+            </div>
+            <div class="form-group">
+                <label>UNIT</label>
+                <select id="f-unit">
+                    <option value="">None</option>
+                    <option value="G">G - Grams</option>
+                    <option value="KG">KG - Kilograms</option>
+                    <option value="L">L - Liters</option>
+                    <option value="ML">ML - Milliliters</option>
+                    <option value="P">P - Pieces</option>
+                    <option value="Pe">Pe - Persons</option>
+                </select>
+            </div>
+        </div>
         <div class="form-group">
             <label>PAYMENT TYPE</label>
             <select id="f-payment">
-                <option value="Credit Card">Credit Card</option>
-                <option value="Debit">Debit</option>
+                <option value="">Select Payment Type</option>
+                <option value="Account Debit">Account Debit</option>
+                <option value="American Express SimplyCash">American Express SimplyCash</option>
+                <option value="American Express SimplyCash - Cashback">American Express SimplyCash - Cashback</option>
                 <option value="Cash">Cash</option>
-                <option value="E-Transfer">E-Transfer</option>
+                <option value="Costco Mastercard">Costco Mastercard</option>
+                <option value="Costco Mastercard - Cashback">Costco Mastercard - Cashback</option>
+                <option value="Home Trust Preferred Visa">Home Trust Preferred Visa</option>
+                <option value="Rogers Mastercard">Rogers Mastercard</option>
+                <option value="Scotiabank Visa Card - Dhruv">Scotiabank Visa Card - Dhruv</option>
+                <option value="Scotiabank Visa Card - Mansi">Scotiabank Visa Card - Mansi</option>
             </select>
         </div>`;
     }
@@ -560,6 +704,9 @@ function resetForm() {
     if (document.getElementById('f-desc')) document.getElementById('f-desc').value = '';
     if (document.getElementById('f-cat')) document.getElementById('f-cat').value = '';
     if (document.getElementById('f-cat-display')) document.getElementById('f-cat-display').textContent = 'Select Category';
+    if (document.getElementById('f-qty')) document.getElementById('f-qty').value = '';
+    if (document.getElementById('f-unit')) document.getElementById('f-unit').value = '';
+    if (document.getElementById('f-payment')) document.getElementById('f-payment').value = '';
 }
 
 function toggleRepeat(type) {
@@ -573,23 +720,40 @@ async function saveEntry() {
     const desc = document.getElementById('f-desc').value;
     if (!amount || !date || !desc) { showToast('Fill in required fields', true); return; }
 
-    let values = [];
+    const payload = {
+        amount, date, description: desc, desc, date, amount // support both variations
+    };
+
     if (activeSheet === 'ED') {
-        const cat = document.getElementById('f-cat').value;
-        const pay = document.getElementById('f-payment').value;
-        values = [cat, date, desc, amount, '', '', pay];
+        payload.category = document.getElementById('f-cat').value;
+        payload.cat = payload.category;
+        payload.payment_type = document.getElementById('f-payment').value;
+        payload.pay = payload.payment_type;
+        payload.quantity = document.getElementById('f-qty').value;
+        payload.qty = payload.quantity;
+        payload.unit = document.getElementById('f-unit').value;
     } else if (activeSheet === 'MED') {
-        const cat = document.getElementById('f-cat').value;
-        const pay = document.getElementById('f-payment').value;
-        const bw = document.getElementById('f-biweekly').checked ? 'TRUE' : 'FALSE';
-        const mo = document.getElementById('f-monthly').checked ? 'TRUE' : 'FALSE';
-        values = [cat, date, desc, amount, pay, bw, mo];
+        payload.category = document.getElementById('f-cat').value;
+        payload.cat = payload.category;
+        payload.payment_type = document.getElementById('f-payment').value;
+        payload.pay = payload.payment_type;
+        payload.quantity = document.getElementById('f-qty').value;
+        payload.qty = payload.quantity;
+        payload.unit = document.getElementById('f-unit').value;
+        payload.repeat_bi_weekly = document.getElementById('f-biweekly').checked ? 'TRUE' : 'FALSE';
+        payload.bw = payload.repeat_bi_weekly;
+        payload.repeat_monthly = document.getElementById('f-monthly').checked ? 'TRUE' : 'FALSE';
+        payload.mo = payload.repeat_monthly;
     } else if (activeSheet === 'ID') {
-        const comp = (document.getElementById('f-company')?.value) || '';
-        const phone = (document.getElementById('f-phone')?.value) || '';
-        const bw = document.getElementById('f-biweekly')?.checked ? 'TRUE' : 'FALSE';
-        values = [desc, comp, date, amount, phone, bw];
+        payload.company = (document.getElementById('f-company')?.value) || '';
+        payload.comp = payload.company;
+        payload.phone_bill = (document.getElementById('f-phone')?.value) || '';
+        payload.phone = payload.phone_bill;
+        payload.repeat_bi_weekly = document.getElementById('f-biweekly')?.checked ? 'TRUE' : 'FALSE';
+        payload.bw = payload.repeat_bi_weekly;
     }
+
+    const values = DS.mapFieldsToRow(activeSheet, payload);
 
     showLoader(true);
     try {
@@ -623,15 +787,14 @@ async function deleteEntry() {
 
 // ── Category Picker ───────────────────────────────────────────────────────────
 const CATEGORIES = {
-    "Food & Drink": ["Groceries","Restaurants","Coffee","Alcohol","Takeout"],
-    "Housing": ["Rent","Electricity","Water","Gas","Internet","Maintenance"],
-    "Transport": ["Gas","Public Transit","Uber/Lyft","Parking","Insurance"],
-    "Entertainment": ["Subscriptions","Movies","Hobbies","Games","Events"],
-    "Shopping": ["Clothing","Electronics","Home Goods","Pharmacy","Beauty"],
-    "Finance": ["Interest","Fees","Savings Transfer","Loan Payment"],
-    "Work": ["Office Supplies","Software","Travel","Meals"],
-    "Health": ["Gym","Doctor","Dentist","Vitamins"],
-    "Misc": ["Gifts","Donations","Uncategorized"]
+    "Electronics": ["Anti Virus"],
+    "Entertainment": ["Games", "Movies", "Others"],
+    "Food": ["Coffee", "Dining Out", "Groceries", "Packaged Food"],
+    "Home": ["Electronics", "Furniture", "Household Machines", "Household Supplies", "Insurance", "Maintenance", "Mortgage", "Rent", "Taxes"],
+    "Life": ["Bank Account Fees", "Business", "Charity", "Clothing", "Credit Card Fees", "Donation", "Education", "Footwear", "Gifts", "Grooming", "India", "Insurance", "Investments", "Makeup & Skincare", "Medical Expenses", "Membership", "Other", "Parcels", "Shein", "Souvenir"],
+    "Liquor": ["Liquor"],
+    "Transportation": ["Bus", "Car", "Flight", "Gas", "Hotel", "Other", "Parking", "Taxi", "Train"],
+    "Utilities": ["Electricity", "Heat", "Internet (Wi-Fi)", "Phone", "TV", "Water"]
 };
 
 function showCategoryPicker() {
