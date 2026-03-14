@@ -129,8 +129,18 @@ body{
   font-size:18px;cursor:pointer;transition:background .2s;
 }
 /* ── FILTERS ─────────────────────────────────────────────────────────────── */
+#filter-container {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+#filter-container.show {
+    max-height: 200px;
+}
 .filter-bar{
-  display:flex;gap:8px;padding:0 16px 16px;
+  display:flex;gap:8px;padding:12px 16px;
   overflow-x:auto;-webkit-overflow-scrolling:touch;
 }
 .filter-bar::-webkit-scrollbar{display:none;}
@@ -143,12 +153,6 @@ body{
 .filter-chip.active{
   background:var(--blue);border-color:var(--blue);
   color:#fff;
-}
-.filter-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
-.filter-input{
-    background: var(--surface2); border: 1px solid var(--border);
-    color: var(--t1); border-radius: 8px; padding: 6px 10px;
-    font-size: 13px; font-family: inherit; outline: none; flex: 1;
 }
 
 .refresh-btn:active{background:var(--surface3);}
@@ -445,7 +449,7 @@ body{
   display:flex;flex-direction:column;padding:56px 0 32px;
 }
 #sidebar.show{transform:translateX(0);}
-.side-header{padding:0 20px 20px;border-bottom:1px solid var(--sep);margin-bottom:12px;}
+.side-header{padding:0 20px 20px; border-bottom:1px solid var(--sep); margin-bottom:12px; display:flex; align-items:center; justify-content:space-between;}
 .side-title{font-size:22px;font-weight:800;color:var(--t1);}
 .side-content{flex:1;overflow-y:auto;padding:0 12px;}
 .side-item{
@@ -453,15 +457,42 @@ body{
   border-radius:12px;color:var(--t2);font-size:14px;font-weight:500;
   cursor:pointer;transition:background .2s;
 }
+.side-item.active { background: var(--surface2); color: var(--blue2); }
 .side-item:active{background:var(--surface2);color:var(--t1);}
-.side-item-icon{font-size:18px;opacity:0.8;}
-.side-label{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;padding:20px 20px 8px;}
+.side-item-icon{font-size:18px;opacity:0.8; width: 24px; text-align: center;}
+.side-label{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:1px;padding:20px 20px 8px; border-top: 1px solid var(--sep); margin-top: 10px;}
+.side-label:first-child { border-top: none; margin-top: 0; }
 .add-custom-cat{
-    padding:0 20px 20px; margin-top: auto;
+    padding:16px 20px; margin-top: auto; border-top: 1px solid var(--sep);
 }
 .add-custom-btn{
     width:100%; padding: 12px; background: var(--surface2); border: 1px dashed var(--border);
     border-radius: 12px; color: var(--t2); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+
+/* ── CHARTS ─────────────────────────────────────────────────────────────── */
+.chart-container {
+    height: 240px;
+    margin: 20px 0;
+    position: relative;
+}
+.chart-legend {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 20px;
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--t2);
+}
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
 }
 </style>
 </head>
@@ -497,7 +528,7 @@ body{
 
   <!-- Main App -->
   <div id="main-app">
-    <!-- Header injected via app.js for flexibility, but let's define structure -->
+    <div id="filter-container"></div>
     <div id="tab-content"></div>
 
     <!-- FAB -->

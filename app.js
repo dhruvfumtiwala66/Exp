@@ -212,7 +212,7 @@ async function bootstrapApp() {
     try {
         await DS.init(state.token, state.spreadsheetId);
         document.getElementById('main-app').style.display = 'flex';
-        renderSidebarCategories();
+        renderSidebar();
         switchTab('expenses');
     } catch (err) {
         showToast('Failed to load data. Try again.', true);
@@ -222,12 +222,19 @@ async function bootstrapApp() {
 
 // ── Tab Navigation ────────────────────────────────────────────────────────────
 let currentTab = 'expenses';
+let analyticsSubTab = 'expenses-cat'; // Default analytics view
 const CURRENCY = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' });
 
 const filters = {
     category: 'All',
-    dateRange: 'AllTime' // AllTime, ThisMonth, LastMonth, 30Days
+    dateRange: 'AllTime',
+    show: false
 };
+
+function toggleFilterBar() {
+    filters.show = !filters.show;
+    document.getElementById('filter-container').classList.toggle('show', filters.show);
+}
 
 function setFilter(type, val) {
     filters[type] = val;
@@ -273,7 +280,7 @@ function renderFilterBar(items, sheet) {
         {id:'30Days', label:'Last 30 Days'}
     ];
 
-    return `
+    const html = `
         <div class="filter-bar">
             ${dateRanges.map(dr => `<div class="filter-chip ${filters.dateRange===dr.id?'active':''}" onclick="setFilter('dateRange', '${dr.id}')">${dr.label}</div>`).join('')}
         </div>
@@ -282,6 +289,7 @@ function renderFilterBar(items, sheet) {
             ${cats.map(c => `<div class="filter-chip ${filters.category===c?'active':''}" onclick="setFilter('category', '${c}')">${c}</div>`).join('')}
         </div>` : ''}
     `;
+    document.getElementById('filter-container').innerHTML = html;
 }
 
 function switchTab(tab) {
@@ -299,6 +307,7 @@ function renderTabContent() {
     else if (currentTab === 'mandatory') renderMandatory(c);
     else if (currentTab === 'income') renderIncome(c);
     else if (currentTab === 'analytics') renderAnalytics(c);
+    renderSidebar();
 }
 
 // ── Render Helpers ────────────────────────────────────────────────────────────
@@ -316,14 +325,15 @@ function catIcon(cat) {
     return CAT_ICONS[clean] || '💰'; 
 }
 
-function renderHeader(title) {
+function renderHeader(title, hasFilters = true) {
     return `
         <div class="page-header">
             <div class="header-left">
-                <button class="menu-btn" onclick="toggleSidebar(true)" title="Categories">☰</button>
+                <button class="menu-btn" onclick="toggleSidebar(true)" title="Menu">☰</button>
                 <h1 class="page-title">${title}</h1>
             </div>
             <div class="header-right">
+                ${hasFilters ? `<button class="refresh-btn ${filters.show ? 'active' : ''}" onclick="toggleFilterBar()" title="Filter" style="margin-right:8px; font-size:16px;">🔍</button>` : ''}
                 <button class="refresh-btn" onclick="syncData()" title="Sync">↻</button>
             </div>
         </div>`;
@@ -447,134 +457,112 @@ function getSubtext(item, sheet) {
 // ── Expenses Tab ──────────────────────────────────────────────────────────────
 function renderExpenses(c) {
     const items = DS.ed;
-    const now = new Date();
-    const thisMonth = items.filter(r => {
-        const d = robustParseDate(r.date);
-        return d && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    });
-    const monthTotal = thisMonth.reduce((s, r) => s + (parseFloat(r.amount)||0), 0);
+    renderFilterBar(items, 'ED');
     c.innerHTML = `
         ${renderHeader('Expenses')}
-        ${renderSummaryCard('linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 'THIS MONTH', CURRENCY.format(monthTotal),
-            {label:'TOTAL ENTRIES', value: items.length},
-            {label:'DAILY AVG', value: CURRENCY.format(monthTotal / (new Date(now.getFullYear(), now.getMonth()+1, 0).getDate()))}
-        )}
-        ${renderFilterBar(items, 'ED')}
         ${renderItemList(items, 'ED')}`;
 }
 
 // ── Mandatory Tab ─────────────────────────────────────────────────────────────
 function renderMandatory(c) {
     const items = DS.med;
-    const bw = items.filter(i => i.repeat_bi_weekly === 'TRUE').reduce((a, b) => a + (parseFloat(b.amount)||0), 0) * 2;
-    const mo = items.filter(i => i.repeat_monthly === 'TRUE').reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
-    const total = bw + mo;
+    renderFilterBar(items, 'MED');
     c.innerHTML = `
         ${renderHeader('Mandatory')}
-        ${renderSummaryCard('linear-gradient(135deg, #f093fb 0%, #8B5CF6 100%)', 'MONTHLY OBLIGATIONS', CURRENCY.format(total),
-            {label:'BI-WEEKLY ×2', value: CURRENCY.format(bw)},
-            {label:'MONTHLY', value: CURRENCY.format(mo)}
-        )}
-        ${renderFilterBar(items, 'MED')}
         ${renderItemList(items, 'MED')}`;
 }
 
 // ── Income Tab ────────────────────────────────────────────────────────────────
 function renderIncome(c) {
     const items = DS.id;
-    const incomeTotal = items.reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
-    const expTotal = DS.ed.reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
-    const mandBW = DS.med.filter(i => i.repeat_bi_weekly === 'TRUE').reduce((a, b) => a + (parseFloat(b.amount)||0), 0) * 2;
-    const mandMO = DS.med.filter(i => i.repeat_monthly === 'TRUE').reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
-    const net = incomeTotal - expTotal - mandBW - mandMO;
+    renderFilterBar(items, 'ID');
     c.innerHTML = `
         ${renderHeader('Income')}
-        ${renderSummaryCard('linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)', 'NET REMAINING', CURRENCY.format(net),
-            {label:'TOTAL INCOME', value: CURRENCY.format(incomeTotal)},
-            {label:'SOURCES', value: items.length}
-        )}
         ${renderItemList(items, 'ID')}`;
 }
 
 // ── Analytics Tab ─────────────────────────────────────────────────────────────
-let analyticView = 'Category';
-
 function renderAnalytics(c) {
-    const views = ['Category', 'Payment', 'Monthly', 'Cash Flow'];
+    const labels = {
+        'expenses-cat': 'Expense / Categories',
+        'expenses-card': 'Expense / Card',
+        'expenses-month': 'Expense / Month',
+        'income-company': 'Income / Company',
+        'income-month': 'Income / Month'
+    };
+    
+    const sourceData = (analyticsSubTab.startsWith('income') ? DS.id : DS.ed);
+    renderFilterBar(sourceData, analyticsSubTab.startsWith('income') ? 'ID' : 'ED');
+    
+    const filtered = getFilteredData(sourceData);
+    
     c.innerHTML = `
-        ${renderHeader('Analytics')}
-        <div class="seg-control">
-            ${views.map(v => `<div class="seg${analyticView===v?' seg-active':''}" onclick="switchAnalytics('${v}')">${v}</div>`).join('')}
+        ${renderHeader(labels[analyticsSubTab] || 'Analytics')}
+        <div class="an-card">
+            <canvas id="analyticsChart"></canvas>
         </div>
-        <div id="analytics-body"></div>`;
-    renderAnalyticsBody();
-}
-
-function switchAnalytics(v) {
-    analyticView = v;
-    document.querySelectorAll('.seg').forEach(s => s.classList.toggle('seg-active', s.textContent === v));
-    renderAnalyticsBody();
-}
-
-function renderAnalyticsBody() {
-    const body = document.getElementById('analytics-body');
-    if (!body) return;
-    const expenses = DS.ed;
-    const incomeTotal = DS.id.reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
-    const mandBW = DS.med.filter(i => i.repeat_bi_weekly==='TRUE').reduce((a,b)=>a+(parseFloat(b.amount)||0),0)*2;
-    const mandMO = DS.med.filter(i=>i.repeat_monthly==='TRUE').reduce((a,b)=>a+(parseFloat(b.amount)||0),0);
-    const mandTotal = mandBW + mandMO;
-    const expTotal = expenses.reduce((a, b) => a + (parseFloat(b.amount)||0), 0);
-
-    // Visual Analysis Cards (Top Metrics)
-    const sortedByAmt = [...expenses].sort((a,b) => (parseFloat(b.amount)||0) - (parseFloat(a.amount)||0));
-    const maxExpense = sortedByAmt[0];
-    const avgTrans = expTotal / (expenses.length || 1);
-
-    const cardUsage = {};
-    expenses.forEach(r => { if(r.payment_type) cardUsage[r.payment_type] = (cardUsage[r.payment_type]||0) + (parseFloat(r.amount)||0); });
-    const topCard = Object.entries(cardUsage).sort((a,b)=>b[1]-a[1])[0];
-
-    const statsHtml = `
-        <div class="an-grid">
-            <div class="an-stat-card"><div class="an-stat-label">BIGGEST SPEND</div><div class="an-stat-val">${maxExpense ? CURRENCY.format(maxExpense.amount) : '$0'}</div><div class="an-stat-sub">${maxExpense?.description || 'None'}</div></div>
-            <div class="an-stat-card"><div class="an-stat-label">TOP CARD</div><div class="an-stat-val" style="font-size:14px; line-height:1.2;">${topCard ? topCard[0] : 'None'}</div><div class="an-stat-sub">${topCard ? CURRENCY.format(topCard[1]) : ''}</div></div>
-            <div class="an-stat-card"><div class="an-stat-label">AVG TRANS</div><div class="an-stat-val">${CURRENCY.format(avgTrans)}</div><div class="an-stat-sub">${expenses.length} Trans</div></div>
-            <div class="an-stat-card"><div class="an-stat-label">TOTAL SPENT</div><div class="an-stat-val">${CURRENCY.format(expTotal)}</div><div class="an-stat-sub">Across all time</div></div>
-        </div>
+        <div id="chartLegend" class="chart-legend"></div>
     `;
+    
+    setTimeout(() => renderChart(filtered), 100);
+}
 
-    if (analyticView === 'Cash Flow') {
-        const net = incomeTotal - expTotal - mandTotal;
-        const savRate = incomeTotal > 0 ? (net / incomeTotal) * 100 : 0;
-        const hColor = savRate > 20 ? '#10B981' : (savRate > 0 ? '#F59E0B' : '#EF4444');
-        const maxBar = Math.max(incomeTotal, expTotal, mandTotal, 1);
-        body.innerHTML = statsHtml + `
-            <div class="an-card">
-                ${barRow('Income', incomeTotal, maxBar, '#10B981')}
-                ${barRow('Expenses', expTotal, maxBar, '#EF4444')}
-                ${barRow('Mandatory', mandTotal, maxBar, '#8B5CF6')}
-            </div>
-            <div class="an-card">
-                <div class="an-card-title">Budget Health — ${Math.round(savRate)}% Saved</div>
-                <div class="health-bar-bg"><div class="health-bar-fill" style="width:${Math.max(0,Math.min(100,savRate+50))}%;background:${hColor};"></div></div>
-                <p class="an-hint">Savings rate relative to 0% baseline.</p>
-            </div>`;
-        return;
+function renderChart(data) {
+    const ctx = document.getElementById('analyticsChart')?.getContext('2d');
+    if (!ctx) return;
+    
+    const groups = {};
+    if (analyticsSubTab === 'expenses-cat') {
+        data.forEach(r => { const k = r.category || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
+    } else if (analyticsSubTab === 'expenses-card') {
+        data.forEach(r => { const k = r.payment_type || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
+    } else if (analyticsSubTab === 'expenses-month' || analyticsSubTab === 'income-month') {
+        data.forEach(r => { const k = (r.date || '').substring(0, 7) || 'Unknown'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
+    } else if (analyticsSubTab === 'income-company') {
+        data.forEach(r => { const k = r.company || 'Other'; groups[k] = (groups[k]||0) + (parseFloat(r.amount)||0); });
     }
-
-    const groupFn = analyticView === 'Category' ? r => r.category || 'Other'
-        : analyticView === 'Payment' ? r => r.payment_type || 'Other'
-        : r => (r.date || '').substring(0, 7) || 'Unknown';
-
-    const map = {};
-    expenses.forEach(r => { const k = groupFn(r); map[k] = (map[k]||0) + (parseFloat(r.amount)||0); });
-    const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]);
-    const maxVal = sorted.length ? sorted[0][1] : 1;
-
-    const COLORS = ['#667eea','#764ba2','#f093fb','#f5576c','#4facfe','#43e97b','#fa709a','#fee140'];
-    let html = statsHtml + `<div class="an-card">${sorted.map(([label, val], i) => barRow(label||'Other', val, maxVal, COLORS[i % COLORS.length])).join('')}</div>`;
-    body.innerHTML = html;
+    
+    const sorted = Object.entries(groups).sort((a,b) => b[1] - a[1]);
+    const labels = sorted.map(s => s[0]);
+    const values = sorted.map(s => s[1]);
+    const COLORS = ['#6366F1','#8B5CF6','#EC4899','#EF4444','#F59E0B','#10B981','#06B6D4','#3B82F6'];
+    
+    const isPie = analyticsSubTab.includes('cat') || analyticsSubTab.includes('card') || analyticsSubTab.includes('company');
+    
+    if (window.activeChart) window.activeChart.destroy();
+    
+    window.activeChart = new Chart(ctx, {
+        type: isPie ? 'doughnut' : 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: COLORS,
+                borderWidth: 0,
+                borderRadius: isPie ? 0 : 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+                legend: { display: false }
+            },
+            scales: isPie ? {} : {
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, border: { display: false }, ticks: { color: 'rgba(240,240,255,0.4)' } },
+                x: { grid: { display: false }, ticks: { color: 'rgba(240,240,255,0.4)' } }
+            }
+        }
+    });
+    
+    const legend = document.getElementById('chartLegend');
+    legend.innerHTML = sorted.map(([label, val], i) => `
+        <div class="legend-item">
+            <div class="legend-color" style="background:${COLORS[i % COLORS.length]}"></div>
+            <div style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${label}</div>
+            <div style="font-weight:700;">${CURRENCY.format(val)}</div>
+        </div>
+    `).join('');
 }
 
 function barRow(label, val, max, color) {
@@ -887,17 +875,47 @@ function toggleSidebar(show) {
     }
 }
 
-function renderSidebarCategories() {
+function switchSidebarTab(tab, sub = null) {
+    if (tab === 'analytics') {
+        currentTab = 'analytics';
+        analyticsSubTab = sub;
+    } else {
+        currentTab = tab;
+    }
+    renderTabContent();
+    toggleSidebar(false);
+}
+
+function renderSidebar() {
     const container = document.getElementById('sidebar-categories');
-    let html = '';
+    
+    let html = `
+        <div class="side-label">Navigation</div>
+        <div class="side-item ${currentTab==='expenses'?'active':''}" onclick="switchSidebarTab('expenses')"><div class="side-item-icon">💸</div>Expenses</div>
+        <div class="side-item ${currentTab==='mandatory'?'active':''}" onclick="switchSidebarTab('mandatory')"><div class="side-item-icon">🗓️</div>Mandatory</div>
+        <div class="side-item ${currentTab==='income'?'active':''}" onclick="switchSidebarTab('income')"><div class="side-item-icon">💰</div>Income</div>
+
+        <div class="side-label">Analytics</div>
+        <div class="side-item ${analyticsSubTab==='expenses-cat'&&currentTab==='analytics'?'active':''}" onclick="switchSidebarTab('analytics', 'expenses-cat')"><div class="side-item-icon">📊</div>Expense / Categories</div>
+        <div class="side-item ${analyticsSubTab==='expenses-card'&&currentTab==='analytics'?'active':''}" onclick="switchSidebarTab('analytics', 'expenses-card')"><div class="side-item-icon">💳</div>Expense / Card</div>
+        <div class="side-item ${analyticsSubTab==='expenses-month'&&currentTab==='analytics'?'active':''}" onclick="switchSidebarTab('analytics', 'expenses-month')"><div class="side-item-icon">📅</div>Expense / Month</div>
+        <div class="side-item ${analyticsSubTab==='income-company'&&currentTab==='analytics'?'active':''}" onclick="switchSidebarTab('analytics', 'income-company')"><div class="side-item-icon">🏢</div>Income / Company</div>
+        <div class="side-item ${analyticsSubTab==='income-month'&&currentTab==='analytics'?'active':''}" onclick="switchSidebarTab('analytics', 'income-month')"><div class="side-item-icon">📈</div>Income / Month</div>
+
+        <div class="side-label">Account</div>
+        <div class="side-item" onclick="handleSignOut()"><div class="side-item-icon">🚪</div>Sign Out</div>
+
+        <div class="side-label">Categories</div>
+    `;
+    
     for (const group in CATEGORIES) {
-        html += `<div class="side-label">${group}</div>`;
-        if (CATEGORIES[group].length === 0) {
+        const cats = CATEGORIES[group];
+        if (cats.length === 0) {
              html += `<div class="side-item"><div class="side-item-icon">${catIcon(group)}</div><div class="side-name">${group}</div></div>`;
         } else {
-            CATEGORIES[group].forEach(cat => {
+            cats.forEach(cat => {
                 const full = `${group} - ${cat}`;
-                html += `<div class="side-item"><div class="side-item-icon">${catIcon(full)}</div><div class="side-name">${cat}</div></div>`;
+                html += `<div class="side-item"><div class="side-item-icon">${catIcon(full)}</div><div class="side-name" style="font-size:12px; opacity:0.8;">${cat}</div></div>`;
             });
         }
     }
